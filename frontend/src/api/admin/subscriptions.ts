@@ -22,6 +22,7 @@ export interface SubscriptionBulkActionRequest {
   daily?: boolean
   weekly?: boolean
   monthly?: boolean
+  five_hour?: boolean
 }
 
 export interface SubscriptionBulkActionResult {
@@ -171,14 +172,31 @@ export async function restore(id: number): Promise<UserSubscription> {
 }
 
 /**
- * Reset daily, weekly, and/or monthly usage quota for a subscription
+ * Update a subscription's quota multiplier (0-1).
+ * @param id - Subscription ID
+ * @param quotaMultiplier - Effective quota ratio
+ * @returns Updated subscription
+ */
+export async function updateQuotaMultiplier(
+  id: number,
+  quotaMultiplier: number
+): Promise<UserSubscription> {
+  const { data } = await apiClient.put<UserSubscription>(
+    `/admin/subscriptions/${id}/quota-multiplier`,
+    { quota_multiplier: quotaMultiplier }
+  )
+  return data
+}
+
+/**
+ * Reset daily, weekly, monthly, and/or five-hour usage quota for a subscription
  * @param id - Subscription ID
  * @param options - Which windows to reset
  * @returns Updated subscription
  */
 export async function resetQuota(
   id: number,
-  options: { daily: boolean; weekly: boolean; monthly: boolean }
+  options: { daily: boolean; weekly: boolean; monthly: boolean; five_hour?: boolean }
 ): Promise<UserSubscription> {
   const { data } = await apiClient.post<UserSubscription>(
     `/admin/subscriptions/${id}/reset-quota`,
@@ -240,6 +258,7 @@ export const subscriptionsAPI = {
   revoke,
   restore,
   resetQuota,
+  updateQuotaMultiplier,
   listByGroup,
   listByUser
 }

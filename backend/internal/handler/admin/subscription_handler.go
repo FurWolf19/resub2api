@@ -41,18 +41,29 @@ func NewSubscriptionHandler(subscriptionService *service.SubscriptionService) *S
 
 // AssignSubscriptionRequest represents assign subscription request
 type AssignSubscriptionRequest struct {
-	UserID       int64  `json:"user_id" binding:"required"`
-	GroupID      int64  `json:"group_id" binding:"required"`
-	ValidityDays int    `json:"validity_days" binding:"omitempty,max=36500"` // max 100 years
-	Notes        string `json:"notes"`
+	UserID          int64    `json:"user_id" binding:"required"`
+	GroupID         int64    `json:"group_id" binding:"required"`
+	ValidityDays    int      `json:"validity_days" binding:"omitempty,max=36500"` // max 100 years
+	Notes           string   `json:"notes"`
+	QuotaMultiplier *float64 `json:"quota_multiplier"`
 }
 
 // BulkAssignSubscriptionRequest represents bulk assign subscription request
 type BulkAssignSubscriptionRequest struct {
-	UserIDs      []int64 `json:"user_ids" binding:"required,min=1,max=100,dive,gt=0"`
-	GroupID      int64   `json:"group_id" binding:"required"`
-	ValidityDays int     `json:"validity_days" binding:"omitempty,max=36500"` // max 100 years
-	Notes        string  `json:"notes"`
+	UserIDs         []int64  `json:"user_ids" binding:"required,min=1,max=100,dive,gt=0"`
+	GroupID         int64    `json:"group_id" binding:"required"`
+	ValidityDays    int      `json:"validity_days" binding:"omitempty,max=36500"` // max 100 years
+	Notes           string   `json:"notes"`
+	QuotaMultiplier *float64 `json:"quota_multiplier"`
+}
+
+// UpdateQuotaMultiplierRequest represents updating a subscription's quota multiplier.
+type UpdateQuotaMultiplierRequest struct {
+	QuotaMultiplier *float64 `json:"quota_multiplier" binding:"required"`
+}
+
+func validateQuotaMultiplierValue(multiplier *float64) bool {
+	return multiplier != nil && *multiplier >= 0 && *multiplier <= 1
 }
 
 // AdjustSubscriptionRequest represents adjust subscription request (extend or shorten)
@@ -144,13 +155,18 @@ func (h *SubscriptionHandler) Assign(c *gin.Context) {
 
 	// Get admin user ID from context
 	adminID := getAdminIDFromContext(c)
+	if req.QuotaMultiplier != nil && !validateQuotaMultiplierValue(req.QuotaMultiplier) {
+		response.BadRequest(c, "quota_multiplier must be between 0 and 1")
+		return
+	}
 
 	subscription, err := h.subscriptionService.AssignSubscription(c.Request.Context(), &service.AssignSubscriptionInput{
-		UserID:       req.UserID,
-		GroupID:      req.GroupID,
-		ValidityDays: req.ValidityDays,
-		AssignedBy:   adminID,
-		Notes:        req.Notes,
+		UserID:          req.UserID,
+		GroupID:         req.GroupID,
+		ValidityDays:    req.ValidityDays,
+		AssignedBy:      adminID,
+		Notes:           req.Notes,
+		QuotaMultiplier: req.QuotaMultiplier,
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -171,13 +187,18 @@ func (h *SubscriptionHandler) BulkAssign(c *gin.Context) {
 
 	// Get admin user ID from context
 	adminID := getAdminIDFromContext(c)
+	if req.QuotaMultiplier != nil && !validateQuotaMultiplierValue(req.QuotaMultiplier) {
+		response.BadRequest(c, "quota_multiplier must be between 0 and 1")
+		return
+	}
 
 	result, err := h.subscriptionService.BulkAssignSubscription(c.Request.Context(), &service.BulkAssignSubscriptionInput{
-		UserIDs:      req.UserIDs,
-		GroupID:      req.GroupID,
-		ValidityDays: req.ValidityDays,
-		AssignedBy:   adminID,
-		Notes:        req.Notes,
+		UserIDs:         req.UserIDs,
+		GroupID:         req.GroupID,
+		ValidityDays:    req.ValidityDays,
+		AssignedBy:      adminID,
+		Notes:           req.Notes,
+		QuotaMultiplier: req.QuotaMultiplier,
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -235,14 +256,44 @@ func (h *SubscriptionHandler) Extend(c *gin.Context) {
 	}, func(data any) any { return adminSubscriptionResponse(c, data) })
 }
 
-// ResetSubscriptionQuotaRequest represents the reset quota request
-type ResetSubscriptionQuotaRequest struct {
-	Daily   bool `json:"daily"`
-	Weekly  bool `json:"weekly"`
-	Monthly bool `json:"monthly"`
+// UpdateQuotaMultiplier updates a subscription's quota multiplier.
+// PUT /api/v1/admin/subscriptions/:id/quota-multiplier
+func (h *SubscriptionHandler) UpdateQuotaMultiplier(c *gin.Context) {
+	subscriptionID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid subscription ID")
+		return
+	}
+	var req UpdateQuotaMultiplierRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	if !validateQuotaMultiplierValue(req.QuotaMultiplier) {
+		response.BadRequest(c, "quota_multiplier must be between 0 and 1")
+		return
+	}
+	if err := h.subscriptionService.UpdateQuotaMultiplier(c.Request.Context(), subscriptionID, *req.QuotaMultiplier); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	sub, err := h.subscriptionService.GetByID(c.Request.Context(), subscriptionID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, adminSubscriptionResponse(c, dto.UserSubscriptionFromServiceAdmin(sub)))
 }
 
-// ResetQuota resets daily, weekly, and/or monthly usage for a subscription.
+// ResetSubscriptionQuotaRequest represents the reset quota request
+type ResetSubscriptionQuotaRequest struct {
+	Daily    bool `json:"daily"`
+	Weekly   bool `json:"weekly"`
+	Monthly  bool `json:"monthly"`
+	FiveHour bool `json:"five_hour"`
+}
+
+// ResetQuota resets daily, weekly, monthly, and/or five-hour usage for a subscription.
 // POST /api/v1/admin/subscriptions/:id/reset-quota
 func (h *SubscriptionHandler) ResetQuota(c *gin.Context) {
 	subscriptionID, err := strconv.ParseInt(c.Param("id"), 10, 64)
@@ -255,16 +306,67 @@ func (h *SubscriptionHandler) ResetQuota(c *gin.Context) {
 		response.BadRequest(c, "Invalid request: "+err.Error())
 		return
 	}
-	if !req.Daily && !req.Weekly && !req.Monthly {
-		response.BadRequest(c, "At least one of 'daily', 'weekly', or 'monthly' must be true")
+	if !req.Daily && !req.Weekly && !req.Monthly && !req.FiveHour {
+		response.BadRequest(c, "At least one of 'daily', 'weekly', 'monthly', or 'five_hour' must be true")
 		return
 	}
-	sub, err := h.subscriptionService.AdminResetQuota(c.Request.Context(), subscriptionID, req.Daily, req.Weekly, req.Monthly)
+	sub, err := h.subscriptionService.AdminResetQuotaWithFiveHour(c.Request.Context(), subscriptionID, req.Daily, req.Weekly, req.Monthly, req.FiveHour)
 	if err != nil {
 		response.ErrorFrom(c, err)
 		return
 	}
 	response.Success(c, adminSubscriptionResponse(c, dto.UserSubscriptionFromServiceAdmin(sub)))
+}
+
+// GetGroupQuotaMultipliers returns effective subscribers plus users with existing price multipliers.
+// GET /api/v1/admin/groups/:id/quota-multipliers
+func (h *SubscriptionHandler) GetGroupQuotaMultipliers(c *gin.Context) {
+	groupID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid group ID")
+		return
+	}
+	entries, err := h.subscriptionService.GetGroupQuotaMultipliers(c.Request.Context(), groupID)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, entries)
+}
+
+// BatchSetGroupQuotaMultipliersRequest represents batch quota multiplier input.
+type BatchSetGroupQuotaMultipliersRequest struct {
+	Entries []service.GroupQuotaMultiplierInput `json:"entries" binding:"required"`
+}
+
+// BatchSetGroupQuotaMultipliers updates subscriptions or stores next-assignment defaults.
+// PUT /api/v1/admin/groups/:id/quota-multipliers
+func (h *SubscriptionHandler) BatchSetGroupQuotaMultipliers(c *gin.Context) {
+	groupID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		response.BadRequest(c, "Invalid group ID")
+		return
+	}
+	var req BatchSetGroupQuotaMultipliersRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "Invalid request: "+err.Error())
+		return
+	}
+	for _, entry := range req.Entries {
+		if entry.UserID <= 0 {
+			response.BadRequest(c, "user_id must be positive")
+			return
+		}
+		if entry.QuotaMultiplier != nil && !validateQuotaMultiplierValue(entry.QuotaMultiplier) {
+			response.BadRequest(c, "quota_multiplier must be between 0 and 1")
+			return
+		}
+	}
+	if err := h.subscriptionService.BatchSetGroupQuotaMultipliers(c.Request.Context(), groupID, req.Entries); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gin.H{"message": "Quota multipliers updated successfully"})
 }
 
 // Revoke handles revoking a subscription.

@@ -50,12 +50,15 @@ func billingSubKey(userID, groupID int64) string {
 }
 
 const (
-	subFieldStatus       = "status"
-	subFieldExpiresAt    = "expires_at"
-	subFieldDailyUsage   = "daily_usage"
-	subFieldWeeklyUsage  = "weekly_usage"
-	subFieldMonthlyUsage = "monthly_usage"
-	subFieldVersion      = "version"
+	subFieldStatus              = "status"
+	subFieldExpiresAt           = "expires_at"
+	subFieldDailyUsage          = "daily_usage"
+	subFieldWeeklyUsage         = "weekly_usage"
+	subFieldMonthlyUsage        = "monthly_usage"
+	subFieldFiveHourUsage       = "five_hour_usage"
+	subFieldFiveHourWindowStart = "five_hour_window_start"
+	subFieldQuotaMultiplier     = "quota_multiplier"
+	subFieldVersion             = "version"
 )
 
 // billingRateLimitKey generates the Redis key for API key rate limit cache.
@@ -90,9 +93,25 @@ var (
 			return 0
 		end
 		local cost = tonumber(ARGV[1])
+		local now = tonumber(ARGV[3])
+		local win5h = tonumber(ARGV[4])
 		redis.call('HINCRBYFLOAT', KEYS[1], 'daily_usage', cost)
 		redis.call('HINCRBYFLOAT', KEYS[1], 'weekly_usage', cost)
 		redis.call('HINCRBYFLOAT', KEYS[1], 'monthly_usage', cost)
+		-- 5h 窗口：cost<=0 不开启/推进窗口；过期后下一笔 cost>0 重开。
+		if cost > 0 then
+			local raw = redis.call('HGET', KEYS[1], 'five_hour_window_start')
+			local w = 0
+			if raw and raw ~= '' then
+				w = tonumber(raw) or 0
+			end
+			if w == 0 or (now - w) >= win5h then
+				redis.call('HSET', KEYS[1], 'five_hour_usage', tostring(cost))
+				redis.call('HSET', KEYS[1], 'five_hour_window_start', tostring(now))
+			else
+				redis.call('HINCRBYFLOAT', KEYS[1], 'five_hour_usage', cost)
+			end
+		end
 		redis.call('EXPIRE', KEYS[1], ARGV[2])
 		return 1
 	`)
@@ -212,6 +231,23 @@ func (c *billingCache) parseSubscriptionCache(data map[string]string) (*service.
 		result.MonthlyUsage, _ = strconv.ParseFloat(monthlyStr, 64)
 	}
 
+	if fiveHourStr, ok := data[subFieldFiveHourUsage]; ok {
+		result.FiveHourUsage, _ = strconv.ParseFloat(fiveHourStr, 64)
+	}
+
+	if fiveHourWindowStr, ok := data[subFieldFiveHourWindowStart]; ok {
+		if start, err := strconv.ParseInt(fiveHourWindowStr, 10, 64); err == nil {
+			t := time.Unix(start, 0).UTC()
+			result.FiveHourWindowStart = &t
+		}
+	}
+
+	// 旧版本缓存没有 quota_multiplier 字段：迁移前订阅按 1.0 处理。
+	result.QuotaMultiplier = 1.0
+	if multiplierStr, ok := data[subFieldQuotaMultiplier]; ok && multiplierStr != "" {
+		result.QuotaMultiplier, _ = strconv.ParseFloat(multiplierStr, 64)
+	}
+
 	if versionStr, ok := data[subFieldVersion]; ok {
 		result.Version, _ = strconv.ParseInt(versionStr, 10, 64)
 	}
@@ -226,13 +262,21 @@ func (c *billingCache) SetSubscriptionCache(ctx context.Context, userID, groupID
 
 	key := billingSubKey(userID, groupID)
 
+	fiveHourWindowStart := ""
+	if data.FiveHourWindowStart != nil {
+		fiveHourWindowStart = strconv.FormatInt(data.FiveHourWindowStart.Unix(), 10)
+	}
+
 	fields := map[string]any{
-		subFieldStatus:       data.Status,
-		subFieldExpiresAt:    data.ExpiresAt.Unix(),
-		subFieldDailyUsage:   data.DailyUsage,
-		subFieldWeeklyUsage:  data.WeeklyUsage,
-		subFieldMonthlyUsage: data.MonthlyUsage,
-		subFieldVersion:      data.Version,
+		subFieldStatus:              data.Status,
+		subFieldExpiresAt:           data.ExpiresAt.Unix(),
+		subFieldDailyUsage:          data.DailyUsage,
+		subFieldWeeklyUsage:         data.WeeklyUsage,
+		subFieldMonthlyUsage:        data.MonthlyUsage,
+		subFieldFiveHourUsage:       data.FiveHourUsage,
+		subFieldFiveHourWindowStart: fiveHourWindowStart,
+		subFieldQuotaMultiplier:     data.QuotaMultiplier,
+		subFieldVersion:             data.Version,
 	}
 
 	pipe := c.rdb.Pipeline()
@@ -244,7 +288,13 @@ func (c *billingCache) SetSubscriptionCache(ctx context.Context, userID, groupID
 
 func (c *billingCache) UpdateSubscriptionUsage(ctx context.Context, userID, groupID int64, cost float64) error {
 	key := billingSubKey(userID, groupID)
-	_, err := updateSubUsageScript.Run(ctx, c.rdb, []string{key}, cost, int(jitteredTTL().Seconds())).Result()
+	now := time.Now().Unix()
+	_, err := updateSubUsageScript.Run(ctx, c.rdb, []string{key},
+		cost,
+		int(jitteredTTL().Seconds()),
+		now,
+		int(rateLimitWindow5h.Seconds()),
+	).Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
 		log.Printf("Warning: update subscription usage cache failed for user %d group %d: %v", userID, groupID, err)
 		return err

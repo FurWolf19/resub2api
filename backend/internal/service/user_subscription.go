@@ -6,7 +6,10 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 )
 
-const subscriptionDayDuration = 24 * time.Hour
+const (
+	subscriptionDayDuration    = 24 * time.Hour
+	subscriptionFiveHourWindow = 5 * time.Hour
+)
 
 type UserSubscription struct {
 	ID      int64
@@ -17,13 +20,19 @@ type UserSubscription struct {
 	ExpiresAt time.Time
 	Status    string
 
-	DailyWindowStart   *time.Time
-	WeeklyWindowStart  *time.Time
-	MonthlyWindowStart *time.Time
+	DailyWindowStart    *time.Time
+	WeeklyWindowStart   *time.Time
+	MonthlyWindowStart  *time.Time
+	FiveHourWindowStart *time.Time
 
-	DailyUsageUSD   float64
-	WeeklyUsageUSD  float64
-	MonthlyUsageUSD float64
+	DailyUsageUSD    float64
+	WeeklyUsageUSD   float64
+	MonthlyUsageUSD  float64
+	FiveHourUsageUSD float64
+
+	// QuotaMultiplier 是订阅额度倍率：有效限额 = 分组限额 × QuotaMultiplier。
+	// 0 是合法值（额度为 0）；空字段仅可能出现在迁移前数据，读库默认 1.0。
+	QuotaMultiplier float64
 
 	AssignedBy *int64
 	AssignedAt time.Time
@@ -103,6 +112,43 @@ func (s *UserSubscription) NeedsMonthlyResetAt(now time.Time) bool {
 		return false
 	}
 	return !now.Before(s.MonthlyWindowStart.Add(30 * 24 * time.Hour))
+}
+
+// FiveHourWindowExpiredAt 判断固定 5 小时窗口是否已经到期。
+// 5h 窗口不会自动重新开始：到期后用量归零，但 window_start 置空，
+// 必须等下一笔 cost>0 的消费才开启新窗口。
+func (s *UserSubscription) FiveHourWindowExpiredAt(now time.Time) bool {
+	if s == nil || s.FiveHourWindowStart == nil {
+		return false
+	}
+	return !now.Before(s.FiveHourWindowStart.Add(subscriptionFiveHourWindow))
+}
+
+// FiveHourResetTime 返回当前 5h 窗口的结束时间；窗口未开启时返回 nil。
+func (s *UserSubscription) FiveHourResetTime() *time.Time {
+	if s == nil || s.FiveHourWindowStart == nil {
+		return nil
+	}
+	t := s.FiveHourWindowStart.Add(subscriptionFiveHourWindow)
+	return &t
+}
+
+// QuotaMultiplierOrDefault 返回订阅额度倍率。0 是合法倍率，不能被当作缺省值；
+// 只有字段完全未加载（nil 接收者）时才回退到 1.0。
+func (s *UserSubscription) QuotaMultiplierOrDefault() float64 {
+	if s == nil {
+		return 1
+	}
+	return s.QuotaMultiplier
+}
+
+// EffectiveLimit 计算分组限额乘以订阅额度倍率后的有效限额。
+// 分组未配置该窗口限额时返回 0（调用方应先判断 HasXxxLimit，保持无限语义）。
+func (s *UserSubscription) EffectiveLimit(groupLimit *float64) float64 {
+	if groupLimit == nil {
+		return 0
+	}
+	return *groupLimit * s.QuotaMultiplierOrDefault()
 }
 
 func (s *UserSubscription) canAutomaticallyResetDailyAt(now time.Time) bool {
@@ -208,21 +254,28 @@ func (s *UserSubscription) CheckDailyLimit(group *Group, additionalCost float64)
 	if !group.HasDailyLimit() {
 		return true
 	}
-	return s.DailyUsageUSD+additionalCost <= *group.DailyLimitUSD
+	return s.DailyUsageUSD+additionalCost <= s.EffectiveLimit(group.DailyLimitUSD)
 }
 
 func (s *UserSubscription) CheckWeeklyLimit(group *Group, additionalCost float64) bool {
 	if !group.HasWeeklyLimit() {
 		return true
 	}
-	return s.WeeklyUsageUSD+additionalCost <= *group.WeeklyLimitUSD
+	return s.WeeklyUsageUSD+additionalCost <= s.EffectiveLimit(group.WeeklyLimitUSD)
 }
 
 func (s *UserSubscription) CheckMonthlyLimit(group *Group, additionalCost float64) bool {
 	if !group.HasMonthlyLimit() {
 		return true
 	}
-	return s.MonthlyUsageUSD+additionalCost <= *group.MonthlyLimitUSD
+	return s.MonthlyUsageUSD+additionalCost <= s.EffectiveLimit(group.MonthlyLimitUSD)
+}
+
+func (s *UserSubscription) CheckFiveHourLimit(group *Group, additionalCost float64) bool {
+	if !group.HasFiveHourLimit() {
+		return true
+	}
+	return s.FiveHourUsageUSD+additionalCost <= s.EffectiveLimit(group.FiveHourLimitUSD)
 }
 
 func (s *UserSubscription) CheckAllLimits(group *Group, additionalCost float64) (daily, weekly, monthly bool) {

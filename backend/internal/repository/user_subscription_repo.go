@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"database/sql"
 	"time"
 
 	dbent "github.com/Wei-Shaw/sub2api/ent"
@@ -35,9 +36,12 @@ func (r *userSubscriptionRepository) Create(ctx context.Context, sub *service.Us
 		SetNillableDailyWindowStart(sub.DailyWindowStart).
 		SetNillableWeeklyWindowStart(sub.WeeklyWindowStart).
 		SetNillableMonthlyWindowStart(sub.MonthlyWindowStart).
+		SetNillableFiveHourWindowStart(sub.FiveHourWindowStart).
 		SetDailyUsageUsd(sub.DailyUsageUSD).
 		SetWeeklyUsageUsd(sub.WeeklyUsageUSD).
 		SetMonthlyUsageUsd(sub.MonthlyUsageUSD).
+		SetFiveHourUsageUsd(sub.FiveHourUsageUSD).
+		SetQuotaMultiplier(sub.QuotaMultiplier).
 		SetNillableAssignedBy(sub.AssignedBy)
 
 	if sub.StartsAt.IsZero() {
@@ -146,9 +150,12 @@ func (r *userSubscriptionRepository) Update(ctx context.Context, sub *service.Us
 		SetNillableDailyWindowStart(sub.DailyWindowStart).
 		SetNillableWeeklyWindowStart(sub.WeeklyWindowStart).
 		SetNillableMonthlyWindowStart(sub.MonthlyWindowStart).
+		SetNillableFiveHourWindowStart(sub.FiveHourWindowStart).
 		SetDailyUsageUsd(sub.DailyUsageUSD).
 		SetWeeklyUsageUsd(sub.WeeklyUsageUSD).
 		SetMonthlyUsageUsd(sub.MonthlyUsageUSD).
+		SetFiveHourUsageUsd(sub.FiveHourUsageUSD).
+		SetQuotaMultiplier(sub.QuotaMultiplier).
 		SetNillableAssignedBy(sub.AssignedBy).
 		SetAssignedAt(sub.AssignedAt).
 		SetNotes(sub.Notes)
@@ -445,6 +452,23 @@ func (r *userSubscriptionRepository) ResetMonthlyUsage(ctx context.Context, id i
 	return r.translateConditionalWindowReset(ctx, client, id, n, err)
 }
 
+// ResetFiveHourUsage 以 CAS 方式清零 5h 窗口，并把 window_start 置空。
+// 窗口不会自动重新开始，下一笔 cost>0 消费会在 IncrementUsage 中开启新窗口。
+func (r *userSubscriptionRepository) ResetFiveHourUsage(ctx context.Context, id int64, expectedWindowStart *time.Time) error {
+	client := clientFromContext(ctx, r.client)
+	query := client.UserSubscription.Update().Where(usersubscription.IDEQ(id))
+	if expectedWindowStart == nil {
+		query = query.Where(usersubscription.FiveHourWindowStartIsNil())
+	} else {
+		query = query.Where(usersubscription.FiveHourWindowStartEQ(*expectedWindowStart))
+	}
+	n, err := query.
+		SetFiveHourUsageUsd(0).
+		ClearFiveHourWindowStart().
+		Save(ctx)
+	return r.translateConditionalWindowReset(ctx, client, id, n, err)
+}
+
 func (r *userSubscriptionRepository) translateConditionalWindowReset(ctx context.Context, client *dbent.Client, id int64, affected int, err error) error {
 	if err != nil {
 		return translatePersistenceError(err, service.ErrSubscriptionNotFound, nil)
@@ -475,6 +499,20 @@ func (r *userSubscriptionRepository) IncrementUsage(ctx context.Context, id int6
 			daily_usage_usd = us.daily_usage_usd + $1,
 			weekly_usage_usd = us.weekly_usage_usd + $1,
 			monthly_usage_usd = us.monthly_usage_usd + $1,
+			five_hour_window_start = CASE
+				WHEN $1 <= 0 THEN us.five_hour_window_start
+				WHEN us.five_hour_window_start IS NULL
+					OR us.five_hour_window_start <= NOW() - INTERVAL '5 hours'
+				THEN NOW()
+				ELSE us.five_hour_window_start
+			END,
+			five_hour_usage_usd = CASE
+				WHEN $1 <= 0 THEN us.five_hour_usage_usd
+				WHEN us.five_hour_window_start IS NULL
+					OR us.five_hour_window_start <= NOW() - INTERVAL '5 hours'
+				THEN $1
+				ELSE us.five_hour_usage_usd + $1
+			END,
 			updated_at = NOW()
 		FROM groups g
 		WHERE us.id = $2
@@ -512,6 +550,138 @@ func (r *userSubscriptionRepository) BatchUpdateExpiredStatus(ctx context.Contex
 		SetStatus(service.SubscriptionStatusExpired).
 		Save(ctx)
 	return int64(n), err
+}
+
+// ============================================
+// 订阅额度倍率
+// ============================================
+
+// ListGroupQuotaMultipliers 返回分组下有效订阅者与已有价格倍率用户的并集。
+// 有效订阅取 status=active 且未过期；同一用户若有多条（历史数据）取最新到期的一条。
+func (r *userSubscriptionRepository) ListGroupQuotaMultipliers(ctx context.Context, groupID int64) ([]service.GroupQuotaMultiplierEntry, error) {
+	const query = `
+		WITH active_subs AS (
+			SELECT DISTINCT ON (us.user_id)
+				us.user_id,
+				us.id AS subscription_id,
+				us.quota_multiplier
+			FROM user_subscriptions us
+			WHERE us.group_id = $1
+				AND us.deleted_at IS NULL
+				AND us.status = 'active'
+				AND us.expires_at > NOW()
+			ORDER BY us.user_id, us.expires_at DESC, us.id DESC
+		),
+		rate_users AS (
+			SELECT user_id, rate_multiplier
+			FROM user_group_rate_multipliers
+			WHERE group_id = $1 AND rate_multiplier IS NOT NULL
+		),
+		defaults AS (
+			SELECT user_id, quota_multiplier
+			FROM user_group_quota_defaults
+			WHERE group_id = $1
+		),
+		ids AS (
+			SELECT user_id FROM active_subs
+			UNION
+			SELECT user_id FROM rate_users
+		)
+		SELECT
+			ids.user_id,
+			u.username,
+			u.email,
+			COALESCE(u.notes, ''),
+			u.status,
+			active_subs.subscription_id,
+			active_subs.quota_multiplier,
+			defaults.quota_multiplier,
+			rate_users.rate_multiplier
+		FROM ids
+		JOIN users u ON u.id = ids.user_id AND u.deleted_at IS NULL
+		LEFT JOIN active_subs ON active_subs.user_id = ids.user_id
+		LEFT JOIN defaults ON defaults.user_id = ids.user_id
+		LEFT JOIN rate_users ON rate_users.user_id = ids.user_id
+		ORDER BY ids.user_id
+	`
+	client := clientFromContext(ctx, r.client)
+	rows, err := client.QueryContext(ctx, query, groupID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var result []service.GroupQuotaMultiplierEntry
+	for rows.Next() {
+		var entry service.GroupQuotaMultiplierEntry
+		var subscriptionID sql.NullInt64
+		var quotaMultiplier sql.NullFloat64
+		var defaultQuotaMultiplier sql.NullFloat64
+		var rateMultiplier sql.NullFloat64
+		if err := rows.Scan(
+			&entry.UserID,
+			&entry.Username,
+			&entry.Email,
+			&entry.Notes,
+			&entry.Status,
+			&subscriptionID,
+			&quotaMultiplier,
+			&defaultQuotaMultiplier,
+			&rateMultiplier,
+		); err != nil {
+			return nil, err
+		}
+		if subscriptionID.Valid {
+			v := subscriptionID.Int64
+			entry.SubscriptionID = &v
+		}
+		if quotaMultiplier.Valid {
+			v := quotaMultiplier.Float64
+			entry.QuotaMultiplier = &v
+		}
+		if defaultQuotaMultiplier.Valid {
+			v := defaultQuotaMultiplier.Float64
+			entry.DefaultQuotaMultiplier = &v
+		}
+		if rateMultiplier.Valid {
+			v := rateMultiplier.Float64
+			entry.RateMultiplier = &v
+		}
+		result = append(result, entry)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func (r *userSubscriptionRepository) SetSubscriptionQuotaMultiplier(ctx context.Context, subscriptionID int64, multiplier float64) error {
+	client := clientFromContext(ctx, r.client)
+	_, err := client.ExecContext(ctx, `
+		UPDATE user_subscriptions
+		SET quota_multiplier = $1, updated_at = NOW()
+		WHERE id = $2 AND deleted_at IS NULL
+	`, multiplier, subscriptionID)
+	return err
+}
+
+func (r *userSubscriptionRepository) UpsertUserGroupQuotaDefault(ctx context.Context, userID, groupID int64, multiplier float64) error {
+	client := clientFromContext(ctx, r.client)
+	_, err := client.ExecContext(ctx, `
+		INSERT INTO user_group_quota_defaults (user_id, group_id, quota_multiplier, created_at, updated_at)
+		VALUES ($1, $2, $3, NOW(), NOW())
+		ON CONFLICT (user_id, group_id)
+		DO UPDATE SET quota_multiplier = EXCLUDED.quota_multiplier, updated_at = NOW()
+	`, userID, groupID, multiplier)
+	return err
+}
+
+func (r *userSubscriptionRepository) DeleteUserGroupQuotaDefault(ctx context.Context, userID, groupID int64) error {
+	client := clientFromContext(ctx, r.client)
+	_, err := client.ExecContext(ctx, `
+		DELETE FROM user_group_quota_defaults WHERE user_id = $1 AND group_id = $2
+	`, userID, groupID)
+	return err
 }
 
 // Extra repository helpers (currently used only by integration tests).
@@ -641,24 +811,27 @@ func userSubscriptionEntityToServiceWithStatusMapping(m *dbent.UserSubscription,
 		status = service.SubscriptionStatusRevoked
 	}
 	out := &service.UserSubscription{
-		ID:                 m.ID,
-		UserID:             m.UserID,
-		GroupID:            m.GroupID,
-		StartsAt:           m.StartsAt,
-		ExpiresAt:          m.ExpiresAt,
-		Status:             status,
-		DailyWindowStart:   m.DailyWindowStart,
-		WeeklyWindowStart:  m.WeeklyWindowStart,
-		MonthlyWindowStart: m.MonthlyWindowStart,
-		DailyUsageUSD:      m.DailyUsageUsd,
-		WeeklyUsageUSD:     m.WeeklyUsageUsd,
-		MonthlyUsageUSD:    m.MonthlyUsageUsd,
-		AssignedBy:         m.AssignedBy,
-		AssignedAt:         m.AssignedAt,
-		Notes:              derefString(m.Notes),
-		CreatedAt:          m.CreatedAt,
-		UpdatedAt:          m.UpdatedAt,
-		DeletedAt:          m.DeletedAt,
+		ID:                  m.ID,
+		UserID:              m.UserID,
+		GroupID:             m.GroupID,
+		StartsAt:            m.StartsAt,
+		ExpiresAt:           m.ExpiresAt,
+		Status:              status,
+		DailyWindowStart:    m.DailyWindowStart,
+		WeeklyWindowStart:   m.WeeklyWindowStart,
+		MonthlyWindowStart:  m.MonthlyWindowStart,
+		FiveHourWindowStart: m.FiveHourWindowStart,
+		DailyUsageUSD:       m.DailyUsageUsd,
+		WeeklyUsageUSD:      m.WeeklyUsageUsd,
+		MonthlyUsageUSD:     m.MonthlyUsageUsd,
+		FiveHourUsageUSD:    m.FiveHourUsageUsd,
+		QuotaMultiplier:     m.QuotaMultiplier,
+		AssignedBy:          m.AssignedBy,
+		AssignedAt:          m.AssignedAt,
+		Notes:               derefString(m.Notes),
+		CreatedAt:           m.CreatedAt,
+		UpdatedAt:           m.UpdatedAt,
+		DeletedAt:           m.DeletedAt,
 	}
 	if m.Edges.User != nil {
 		out.User = userEntityToService(m.Edges.User)

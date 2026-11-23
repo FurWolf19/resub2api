@@ -41,12 +41,15 @@ var (
 
 // subscriptionCacheData 订阅缓存数据结构（内部使用）
 type subscriptionCacheData struct {
-	Status       string
-	ExpiresAt    time.Time
-	DailyUsage   float64
-	WeeklyUsage  float64
-	MonthlyUsage float64
-	Version      int64
+	Status              string
+	ExpiresAt           time.Time
+	DailyUsage          float64
+	WeeklyUsage         float64
+	MonthlyUsage        float64
+	FiveHourUsage       float64
+	FiveHourWindowStart *time.Time
+	QuotaMultiplier     float64
+	Version             int64
 }
 
 // 缓存写入任务类型
@@ -443,23 +446,29 @@ func (s *BillingCacheService) GetSubscriptionStatus(ctx context.Context, userID,
 
 func (s *BillingCacheService) convertFromPortsData(data *SubscriptionCacheData) *subscriptionCacheData {
 	return &subscriptionCacheData{
-		Status:       data.Status,
-		ExpiresAt:    data.ExpiresAt,
-		DailyUsage:   data.DailyUsage,
-		WeeklyUsage:  data.WeeklyUsage,
-		MonthlyUsage: data.MonthlyUsage,
-		Version:      data.Version,
+		Status:              data.Status,
+		ExpiresAt:           data.ExpiresAt,
+		DailyUsage:          data.DailyUsage,
+		WeeklyUsage:         data.WeeklyUsage,
+		MonthlyUsage:        data.MonthlyUsage,
+		FiveHourUsage:       data.FiveHourUsage,
+		FiveHourWindowStart: data.FiveHourWindowStart,
+		QuotaMultiplier:     data.QuotaMultiplier,
+		Version:             data.Version,
 	}
 }
 
 func (s *BillingCacheService) convertToPortsData(data *subscriptionCacheData) *SubscriptionCacheData {
 	return &SubscriptionCacheData{
-		Status:       data.Status,
-		ExpiresAt:    data.ExpiresAt,
-		DailyUsage:   data.DailyUsage,
-		WeeklyUsage:  data.WeeklyUsage,
-		MonthlyUsage: data.MonthlyUsage,
-		Version:      data.Version,
+		Status:              data.Status,
+		ExpiresAt:           data.ExpiresAt,
+		DailyUsage:          data.DailyUsage,
+		WeeklyUsage:         data.WeeklyUsage,
+		MonthlyUsage:        data.MonthlyUsage,
+		FiveHourUsage:       data.FiveHourUsage,
+		FiveHourWindowStart: data.FiveHourWindowStart,
+		QuotaMultiplier:     data.QuotaMultiplier,
+		Version:             data.Version,
 	}
 }
 
@@ -471,12 +480,15 @@ func (s *BillingCacheService) getSubscriptionFromDB(ctx context.Context, userID,
 	}
 
 	return &subscriptionCacheData{
-		Status:       sub.Status,
-		ExpiresAt:    sub.ExpiresAt,
-		DailyUsage:   sub.DailyUsageUSD,
-		WeeklyUsage:  sub.WeeklyUsageUSD,
-		MonthlyUsage: sub.MonthlyUsageUSD,
-		Version:      sub.UpdatedAt.Unix(),
+		Status:              sub.Status,
+		ExpiresAt:           sub.ExpiresAt,
+		DailyUsage:          sub.DailyUsageUSD,
+		WeeklyUsage:         sub.WeeklyUsageUSD,
+		MonthlyUsage:        sub.MonthlyUsageUSD,
+		FiveHourUsage:       sub.FiveHourUsageUSD,
+		FiveHourWindowStart: sub.FiveHourWindowStart,
+		QuotaMultiplier:     sub.QuotaMultiplierOrDefault(),
+		Version:             sub.UpdatedAt.Unix(),
 	}, nil
 }
 
@@ -819,7 +831,7 @@ func (s *BillingCacheService) ReserveFixedCharge(ctx context.Context, user *User
 		return nil, err
 	}
 	var subscriptionPending, apiKeyPending float64
-	if subscriptionBill && (group.HasDailyLimit() || group.HasWeeklyLimit() || group.HasMonthlyLimit()) {
+	if subscriptionBill && (group.HasDailyLimit() || group.HasWeeklyLimit() || group.HasMonthlyLimit() || group.HasFiveHourLimit()) {
 		res, subscriptionPending = s.reserveInflightScope(ctx, res, user.ID, inflightSubscriptionScope(subscription.ID), amount)
 	}
 	if apiKey != nil && (apiKey.Quota > 0 || apiKey.HasRateLimits()) {
@@ -838,7 +850,7 @@ func (s *BillingCacheService) ReserveFixedCharge(ctx context.Context, user *User
 	return res, nil
 }
 
-// checkFixedChargeSubscription 按库中订阅用量校验日 / 周 / 月剩余额度覆盖 pending。
+// checkFixedChargeSubscription 按库中订阅用量校验日 / 周 / 月 / 5h 剩余额度覆盖 pending。
 func (s *BillingCacheService) checkFixedChargeSubscription(ctx context.Context, userID int64, group *Group, pending float64) error {
 	read := s.GetSubscriptionStatus
 	if s.subRepo != nil {
@@ -848,16 +860,40 @@ func (s *BillingCacheService) checkFixedChargeSubscription(ctx context.Context, 
 	if err != nil {
 		return ErrBillingServiceUnavailable.WithCause(err)
 	}
-	if group.HasDailyLimit() && subData.DailyUsage+pending > *group.DailyLimitUSD {
+	multiplier := subData.QuotaMultiplier
+	if multiplier < 0 {
+		multiplier = 0
+	}
+	effective := func(limit *float64) float64 {
+		if limit == nil {
+			return 0
+		}
+		return *limit * multiplier
+	}
+	if group.HasDailyLimit() && subData.DailyUsage+pending > effective(group.DailyLimitUSD) {
 		return ErrDailyLimitExceeded
 	}
-	if group.HasWeeklyLimit() && subData.WeeklyUsage+pending > *group.WeeklyLimitUSD {
+	if group.HasWeeklyLimit() && subData.WeeklyUsage+pending > effective(group.WeeklyLimitUSD) {
 		return ErrWeeklyLimitExceeded
 	}
-	if group.HasMonthlyLimit() && subData.MonthlyUsage+pending > *group.MonthlyLimitUSD {
+	if group.HasMonthlyLimit() && subData.MonthlyUsage+pending > effective(group.MonthlyLimitUSD) {
 		return ErrMonthlyLimitExceeded
 	}
+	if group.HasFiveHourLimit() {
+		fiveHourUsage := subData.FiveHourUsage
+		if fiveHourWindowExpired(subData.FiveHourWindowStart, time.Now()) {
+			fiveHourUsage = 0
+		}
+		if fiveHourUsage+pending > effective(group.FiveHourLimitUSD) {
+			return ErrFiveHourLimitExceeded
+		}
+	}
 	return nil
+}
+
+// fiveHourWindowExpired 判断固定 5h 窗口是否已过期（窗口为空不算过期）。
+func fiveHourWindowExpired(start *time.Time, now time.Time) bool {
+	return start != nil && !now.Before(start.Add(subscriptionFiveHourWindow))
 }
 
 // checkFixedChargeAPIKey 按库中 Key 用量校验总额度与限速窗口覆盖 pending；未接入仓储时使用请求上下文与限速缓存中的用量。
@@ -1067,17 +1103,37 @@ func (s *BillingCacheService) checkSubscriptionEligibility(ctx context.Context, 
 		return ErrSubscriptionInvalid
 	}
 
-	// 检查限额（使用传入的Group限额配置）
-	if group.HasDailyLimit() && subData.DailyUsage >= *group.DailyLimitUSD {
+	// 检查限额（使用传入的Group限额配置与订阅额度倍率）
+	multiplier := subData.QuotaMultiplier
+	if multiplier < 0 {
+		multiplier = 0
+	}
+	effective := func(limit *float64) float64 {
+		if limit == nil {
+			return 0
+		}
+		return *limit * multiplier
+	}
+	if group.HasDailyLimit() && subData.DailyUsage >= effective(group.DailyLimitUSD) {
 		return ErrDailyLimitExceeded
 	}
 
-	if group.HasWeeklyLimit() && subData.WeeklyUsage >= *group.WeeklyLimitUSD {
+	if group.HasWeeklyLimit() && subData.WeeklyUsage >= effective(group.WeeklyLimitUSD) {
 		return ErrWeeklyLimitExceeded
 	}
 
-	if group.HasMonthlyLimit() && subData.MonthlyUsage >= *group.MonthlyLimitUSD {
+	if group.HasMonthlyLimit() && subData.MonthlyUsage >= effective(group.MonthlyLimitUSD) {
 		return ErrMonthlyLimitExceeded
+	}
+
+	if group.HasFiveHourLimit() {
+		fiveHourUsage := subData.FiveHourUsage
+		if fiveHourWindowExpired(subData.FiveHourWindowStart, time.Now()) {
+			fiveHourUsage = 0
+		}
+		if fiveHourUsage >= effective(group.FiveHourLimitUSD) {
+			return ErrFiveHourLimitExceeded
+		}
 	}
 
 	return nil

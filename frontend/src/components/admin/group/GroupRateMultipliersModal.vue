@@ -71,35 +71,59 @@
         </div>
 
         <!-- 批量调整 + 全部清空 -->
-        <div v-if="localEntries.length > 0" class="mt-3 flex items-center gap-3 border-t border-gray-100 pt-3 dark:border-dark-600">
-          <span class="text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.groups.batchAdjust') }}</span>
-          <div class="flex items-center gap-1.5">
-            <span class="text-xs text-gray-400">×</span>
+        <div v-if="localEntries.length > 0" class="mt-3 space-y-2 border-t border-gray-100 pt-3 dark:border-dark-600">
+          <div class="flex flex-wrap items-center gap-3">
+            <span class="text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.groups.batchAdjust') }}</span>
+            <div class="flex items-center gap-1.5">
+              <span class="text-xs text-gray-400">×</span>
+              <input
+                v-model.number="batchFactor"
+                type="number"
+                step="0.1"
+                min="0"
+                autocomplete="off"
+                class="hide-spinner w-20 rounded border border-gray-200 bg-white px-2 py-1 text-center text-sm transition-colors focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500/20 dark:border-dark-500 dark:bg-dark-700 dark:focus:border-primary-500"
+                placeholder="0.5"
+              />
+              <button
+                type="button"
+                class="btn btn-primary btn-sm shrink-0 px-2.5 py-1 text-xs"
+                :disabled="!batchFactor || batchFactor <= 0"
+                @click="applyBatchFactor"
+              >
+                {{ t('admin.groups.applyMultiplier') }}
+              </button>
+            </div>
+            <div class="ml-auto">
+              <button
+                type="button"
+                class="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-600 transition-colors hover:bg-red-100 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400 dark:hover:bg-red-900/40"
+                @click="clearAllLocal"
+              >
+                {{ t('admin.groups.clearAll') }}
+              </button>
+            </div>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.groups.batchQuotaMultiplier') }}</span>
             <input
-              v-model.number="batchFactor"
+              v-model.number="batchQuotaMultiplier"
               type="number"
-              step="0.1"
+              step="0.05"
               min="0"
+              max="1"
               autocomplete="off"
               class="hide-spinner w-20 rounded border border-gray-200 bg-white px-2 py-1 text-center text-sm transition-colors focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500/20 dark:border-dark-500 dark:bg-dark-700 dark:focus:border-primary-500"
-              placeholder="0.5"
+              :placeholder="t('admin.groups.quotaMultiplierPlaceholder')"
             />
+            <span class="w-12 text-xs tabular-nums text-gray-400">{{ formatQuotaMultiplier(batchQuotaMultiplier) }}</span>
             <button
               type="button"
               class="btn btn-primary btn-sm shrink-0 px-2.5 py-1 text-xs"
-              :disabled="!batchFactor || batchFactor <= 0"
-              @click="applyBatchFactor"
+              :disabled="parseQuotaMultiplier(batchQuotaMultiplier) == null"
+              @click="applyBatchQuotaMultiplier"
             >
-              {{ t('admin.groups.applyMultiplier') }}
-            </button>
-          </div>
-          <div class="ml-auto">
-            <button
-              type="button"
-              class="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-600 transition-colors hover:bg-red-100 dark:border-red-800 dark:bg-red-900/20 dark:text-red-400 dark:hover:bg-red-900/40"
-              @click="clearAllLocal"
-            >
-              {{ t('admin.groups.clearAll') }}
+              {{ t('admin.groups.applyQuotaMultiplier') }}
             </button>
           </div>
         </div>
@@ -136,6 +160,7 @@
                     <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.groups.columns.userNotes') }}</th>
                     <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.groups.columns.userStatus') }}</th>
                     <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.groups.columns.rateMultiplier') }}</th>
+                    <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">{{ t('admin.groups.columns.quotaMultiplier') }}</th>
                     <th v-if="showFinalRate" class="px-3 py-2 text-left text-xs font-medium text-primary-600 dark:text-primary-400">{{ t('admin.groups.finalRate') }}</th>
                     <th class="w-10 px-2 py-2"></th>
                   </tr>
@@ -174,11 +199,35 @@
                         @change="updateLocalRate(entry.user_id, ($event.target as HTMLInputElement).value)"
                       />
                     </td>
+                    <td class="whitespace-nowrap px-3 py-2">
+                      <div class="flex items-center gap-2">
+                        <input
+                          type="number"
+                          step="0.05"
+                          min="0"
+                          max="1"
+                          autocomplete="off"
+                          :value="entry.quota_multiplier ?? ''"
+                          :placeholder="t('admin.groups.quotaMultiplierUnset')"
+                          class="hide-spinner w-20 rounded border border-gray-200 bg-white px-2 py-1 text-center text-sm font-medium transition-colors focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500/20 dark:border-dark-500 dark:bg-dark-700 dark:focus:border-primary-500"
+                          :title="
+                            entry.subscription_id == null
+                              ? t('admin.groups.quotaMultiplierDefaultHint')
+                              : undefined
+                          "
+                          @change="updateLocalQuotaMultiplier(entry.user_id, ($event.target as HTMLInputElement).value)"
+                        />
+                        <span class="w-12 text-right text-xs tabular-nums text-gray-400 dark:text-gray-500">
+                          {{ formatQuotaMultiplier(entry.quota_multiplier) }}
+                        </span>
+                      </div>
+                    </td>
                     <td v-if="showFinalRate" class="whitespace-nowrap px-3 py-2 font-medium text-primary-600 dark:text-primary-400">
                       {{ computeFinalRate(entry.rate_multiplier) }}
                     </td>
                     <td class="px-2 py-2">
                       <button
+                        v-if="entry.rate_multiplier != null"
                         type="button"
                         class="rounded p-1 text-gray-400 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400"
                         @click="removeLocal(entry.user_id)"
@@ -243,7 +292,10 @@ import { ref, computed, watch, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { adminAPI } from '@/api/admin'
-import type { GroupRateMultiplierEntry } from '@/api/admin/groups'
+import type {
+  GroupQuotaMultiplierEntry,
+  GroupRateMultiplierEntry
+} from '@/api/admin/groups'
 import type { AdminGroup, AdminUser } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Pagination from '@/components/common/Pagination.vue'
@@ -251,7 +303,11 @@ import Icon from '@/components/icons/Icon.vue'
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
 import { platformLabel } from '@/utils/platformColors'
 
-interface LocalEntry extends GroupRateMultiplierEntry {}
+interface LocalEntry extends GroupRateMultiplierEntry {
+  subscription_id?: number | null
+  quota_multiplier: number | null
+  default_quota_multiplier?: number | null
+}
 
 const props = defineProps<{
   show: boolean
@@ -268,7 +324,7 @@ const appStore = useAppStore()
 
 const loading = ref(false)
 const saving = ref(false)
-const serverEntries = ref<GroupRateMultiplierEntry[]>([])
+const serverEntries = ref<LocalEntry[]>([])
 const localEntries = ref<LocalEntry[]>([])
 const searchQuery = ref('')
 const searchResults = ref<AdminUser[]>([])
@@ -278,6 +334,7 @@ const newRate = ref<number | null>(null)
 const currentPage = ref(1)
 const pageSize = ref(10)
 const batchFactor = ref<number | null>(null)
+const batchQuotaMultiplier = ref<number | null>(null)
 
 let searchTimeout: ReturnType<typeof setTimeout>
 let loadVersion = 0
@@ -303,11 +360,35 @@ const computeFinalRate = (rate: number | null | undefined) => {
   return parseFloat((base * batchFactor.value).toFixed(6))
 }
 
+const formatQuotaMultiplier = (value: number | null | undefined): string => {
+  if (value == null) return '—'
+  return `${Number((value * 100).toFixed(1))}%`
+}
+
+const parseQuotaMultiplier = (value: number | string | null | undefined): number | null => {
+  if (value === null || value === undefined || value === '') return null
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric) || numeric < 0 || numeric > 1) return null
+  return numeric
+}
+
 // 检测是否有未保存的修改
 const isDirty = computed(() => {
   if (localEntries.value.length !== serverEntries.value.length) return true
-  const serverMap = new Map(serverEntries.value.map(e => [e.user_id, e.rate_multiplier ?? null]))
-  return localEntries.value.some(e => serverMap.get(e.user_id) !== (e.rate_multiplier ?? null))
+  const serverMap = new Map(
+    serverEntries.value.map(e => [
+      e.user_id,
+      { rate: e.rate_multiplier ?? null, quota: e.quota_multiplier ?? null }
+    ])
+  )
+  return localEntries.value.some(e => {
+    const server = serverMap.get(e.user_id)
+    return (
+      !server ||
+      server.rate !== (e.rate_multiplier ?? null) ||
+      server.quota !== (e.quota_multiplier ?? null)
+    )
+  })
 })
 
 const paginatedLocalEntries = computed(() => {
@@ -315,7 +396,7 @@ const paginatedLocalEntries = computed(() => {
   return localEntries.value.slice(start, start + pageSize.value)
 })
 
-const cloneEntries = (entries: GroupRateMultiplierEntry[]): LocalEntry[] => {
+const cloneEntries = (entries: LocalEntry[]): LocalEntry[] => {
   return entries.map(e => ({ ...e }))
 }
 
@@ -326,10 +407,51 @@ const loadEntries = async () => {
   serverEntries.value = []
   localEntries.value = []
   try {
-    const raw = await adminAPI.groups.getGroupRateMultipliers(props.group.id)
+    const quotaRequest =
+      typeof adminAPI.groups.getGroupQuotaMultipliers === 'function'
+        ? adminAPI.groups.getGroupQuotaMultipliers(props.group.id)
+        : Promise.resolve([] as GroupQuotaMultiplierEntry[])
+    const [rateEntries, quotaEntries] = await Promise.all([
+      adminAPI.groups.getGroupRateMultipliers(props.group.id),
+      quotaRequest
+    ])
     if (version !== loadVersion) return
-    // 仅显示已设置 rate_multiplier 的条目；rpm_override 在另一个弹窗管理，保留不动
-    serverEntries.value = raw.filter(e => e.rate_multiplier != null)
+    const merged = new Map<number, LocalEntry>()
+    for (const entry of quotaEntries as GroupQuotaMultiplierEntry[]) {
+      merged.set(entry.user_id, {
+        user_id: entry.user_id,
+        user_name: entry.username || '',
+        user_email: entry.email,
+        user_notes: entry.notes || '',
+        user_status: entry.status || 'active',
+        rate_multiplier: entry.rate_multiplier ?? null,
+        rpm_override: null,
+        subscription_id: entry.subscription_id ?? null,
+        quota_multiplier: entry.quota_multiplier ?? entry.default_quota_multiplier ?? null,
+        default_quota_multiplier: entry.default_quota_multiplier ?? null
+      })
+    }
+    for (const entry of rateEntries) {
+      const existing = merged.get(entry.user_id)
+      if (existing) {
+        existing.user_name = existing.user_name || entry.user_name || ''
+        existing.user_email = existing.user_email || entry.user_email
+        existing.user_notes = existing.user_notes || entry.user_notes || ''
+        existing.user_status = existing.user_status || entry.user_status || 'active'
+        existing.rate_multiplier = entry.rate_multiplier ?? existing.rate_multiplier ?? null
+        existing.rpm_override = entry.rpm_override ?? existing.rpm_override ?? null
+        continue
+      }
+      merged.set(entry.user_id, {
+        ...entry,
+        subscription_id: null,
+        quota_multiplier: null,
+        default_quota_multiplier: null
+      })
+    }
+    // rate_multiplier 为空且没有任何额度倍率的条目只可能来自价格接口，保留展示；
+    // 其余纯订阅用户同样保留。
+    serverEntries.value = Array.from(merged.values())
     localEntries.value = cloneEntries(serverEntries.value)
     adjustPage()
   } catch (error) {
@@ -353,6 +475,7 @@ watch([() => props.show, () => props.group?.id], ([show]) => {
   if (show && props.group) {
     currentPage.value = 1
     batchFactor.value = null
+    batchQuotaMultiplier.value = null
     searchQuery.value = ''
     searchResults.value = []
     selectedUser.value = null
@@ -404,7 +527,11 @@ const handleAddLocal = () => {
     user_notes: user.notes || '',
     user_status: user.status || 'active',
     rate_multiplier: newRate.value,
-    rpm_override: null
+    rpm_override: null,
+    subscription_id: idx >= 0 ? localEntries.value[idx].subscription_id : null,
+    quota_multiplier: idx >= 0 ? localEntries.value[idx].quota_multiplier : null,
+    default_quota_multiplier:
+      idx >= 0 ? localEntries.value[idx].default_quota_multiplier : null
   }
   if (idx >= 0) {
     localEntries.value[idx] = entry
@@ -430,6 +557,19 @@ const updateLocalRate = (userId: number, value: string) => {
   entry.rate_multiplier = num
 }
 
+// 本地修改额度倍率：留空表示清除
+const updateLocalQuotaMultiplier = (userId: number, value: string) => {
+  const entry = localEntries.value.find(e => e.user_id === userId)
+  if (!entry) return
+  if (value.trim() === '') {
+    entry.quota_multiplier = null
+    return
+  }
+  const numeric = parseQuotaMultiplier(value)
+  if (numeric == null) return
+  entry.quota_multiplier = numeric
+}
+
 // 本地删除
 const removeLocal = (userId: number) => {
   localEntries.value = localEntries.value.filter(e => e.user_id !== userId)
@@ -447,30 +587,53 @@ const applyBatchFactor = () => {
   batchFactor.value = null
 }
 
+// 批量设置额度倍率
+const applyBatchQuotaMultiplier = () => {
+  const value = parseQuotaMultiplier(batchQuotaMultiplier.value)
+  if (value == null) return
+  for (const entry of localEntries.value) {
+    entry.quota_multiplier = value
+  }
+  batchQuotaMultiplier.value = null
+}
+
 // 本地清空
 const clearAllLocal = () => {
   localEntries.value = []
+  batchQuotaMultiplier.value = null
 }
 
 // 取消：恢复到服务器数据
 const handleCancel = () => {
   localEntries.value = cloneEntries(serverEntries.value)
   batchFactor.value = null
+  batchQuotaMultiplier.value = null
   adjustPage()
 }
 
-// 保存：一次性提交所有数据（只提交 rate_multiplier；rpm_override 由独立弹窗管理）
+// 保存：价格倍率走原接口，额度倍率走新接口，不能混用
 const handleSave = async () => {
   if (!props.group) return
   saving.value = true
   try {
-    const entries = localEntries.value
+    const rateEntries = localEntries.value
       .filter(e => e.rate_multiplier != null)
       .map(e => ({
         user_id: e.user_id,
         rate_multiplier: e.rate_multiplier as number
       }))
-    await adminAPI.groups.batchSetGroupRateMultipliers(props.group.id, entries)
+    const quotaEntries = localEntries.value.map(e => ({
+      user_id: e.user_id,
+      quota_multiplier: e.quota_multiplier
+    }))
+    const quotaSave =
+      typeof adminAPI.groups.batchSetGroupQuotaMultipliers === 'function'
+        ? adminAPI.groups.batchSetGroupQuotaMultipliers(props.group.id, quotaEntries)
+        : Promise.resolve({ message: '' })
+    await Promise.all([
+      adminAPI.groups.batchSetGroupRateMultipliers(props.group.id, rateEntries),
+      quotaSave
+    ])
     appStore.showSuccess(t('admin.groups.rateSaved'))
     emit('success')
     emit('close')

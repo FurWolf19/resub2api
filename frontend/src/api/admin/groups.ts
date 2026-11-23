@@ -353,6 +353,53 @@ export async function getGroupRateMultipliers(id: number): Promise<GroupRateMult
 }
 
 /**
+ * Quota multiplier entry for a user in a group.
+ * `quota_multiplier` is the active subscription's value; `default_quota_multiplier`
+ * is the value applied on the next assignment when the user has no active subscription.
+ */
+export interface GroupQuotaMultiplierEntry {
+  user_id: number
+  username: string
+  email: string
+  notes: string
+  status: string
+  subscription_id?: number | null
+  quota_multiplier: number | null
+  default_quota_multiplier: number | null
+  rate_multiplier: number | null
+}
+
+export interface GroupQuotaMultiplierInput {
+  user_id: number
+  quota_multiplier: number | null
+}
+
+/**
+ * Get the merged subscriber + rate-multiplier user list for quota multipliers.
+ */
+export async function getGroupQuotaMultipliers(id: number): Promise<GroupQuotaMultiplierEntry[]> {
+  const { data } = await apiClient.get<GroupQuotaMultiplierEntry[]>(
+    `/admin/groups/${id}/quota-multipliers`
+  )
+  return data
+}
+
+/**
+ * Batch save quota multipliers. A null value clears the setting: active
+ * subscriptions fall back to 1.0 and next-assignment defaults are deleted.
+ */
+export async function batchSetGroupQuotaMultipliers(
+  id: number,
+  entries: GroupQuotaMultiplierInput[]
+): Promise<{ message: string }> {
+  const { data } = await apiClient.put<{ message: string }>(
+    `/admin/groups/${id}/quota-multipliers`,
+    { entries }
+  )
+  return data
+}
+
+/**
  * Update group sort orders
  * @param updates - Array of { id, sort_order } objects
  * @returns Success confirmation
@@ -493,6 +540,8 @@ export const groupsAPI = {
   getGroupRateMultipliers,
   clearGroupRateMultipliers,
   batchSetGroupRateMultipliers,
+  getGroupQuotaMultipliers,
+  batchSetGroupQuotaMultipliers,
   getGroupRPMOverrides,
   clearGroupRPMOverrides,
   batchSetGroupRPMOverrides,

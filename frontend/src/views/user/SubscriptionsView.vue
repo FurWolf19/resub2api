@@ -100,6 +100,47 @@
               }}</span>
             </div>
 
+            <!-- Five-hour Usage -->
+            <div v-if="subscription.group?.five_hour_limit_usd" class="space-y-2">
+              <div class="flex items-center justify-between">
+                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {{ t('userSubscriptions.fiveHour') }}
+                </span>
+                <span class="text-sm text-gray-500 dark:text-dark-400">
+                  ${{ (subscription.five_hour_usage_usd || 0).toFixed(2) }} / ${{
+                    effectiveLimit(subscription, subscription.group.five_hour_limit_usd).toFixed(2)
+                  }}
+                </span>
+              </div>
+              <div class="relative h-2 overflow-hidden rounded-full bg-gray-200 dark:bg-dark-600">
+                <div
+                  class="absolute inset-y-0 left-0 rounded-full transition-all duration-300"
+                  :class="
+                    getProgressBarClass(
+                      subscription.five_hour_usage_usd,
+                      effectiveLimit(subscription, subscription.group.five_hour_limit_usd)
+                    )
+                  "
+                  :style="{
+                    width: getProgressWidth(
+                      subscription.five_hour_usage_usd,
+                      effectiveLimit(subscription, subscription.group.five_hour_limit_usd)
+                    )
+                  }"
+                ></div>
+              </div>
+              <p
+                v-if="subscription.five_hour_window_start"
+                class="text-xs text-gray-500 dark:text-dark-400"
+              >
+                {{
+                  t('userSubscriptions.resetIn', {
+                    time: formatResetTime(subscription.five_hour_window_start, 5)
+                  })
+                }}
+              </p>
+            </div>
+
             <!-- Daily Usage -->
             <div v-if="subscription.group?.daily_limit_usd" class="space-y-2">
               <div class="flex items-center justify-between">
@@ -108,7 +149,7 @@
                 </span>
                 <span class="text-sm text-gray-500 dark:text-dark-400">
                   ${{ (subscription.daily_usage_usd || 0).toFixed(2) }} / ${{
-                    subscription.group.daily_limit_usd.toFixed(2)
+                    effectiveLimit(subscription, subscription.group.daily_limit_usd).toFixed(2)
                   }}
                 </span>
               </div>
@@ -118,13 +159,13 @@
                   :class="
                     getProgressBarClass(
                       subscription.daily_usage_usd,
-                      subscription.group.daily_limit_usd
+                      effectiveLimit(subscription, subscription.group.daily_limit_usd)
                     )
                   "
                   :style="{
                     width: getProgressWidth(
                       subscription.daily_usage_usd,
-                      subscription.group.daily_limit_usd
+                      effectiveLimit(subscription, subscription.group.daily_limit_usd)
                     )
                   }"
                 ></div>
@@ -145,7 +186,7 @@
                 </span>
                 <span class="text-sm text-gray-500 dark:text-dark-400">
                   ${{ (subscription.weekly_usage_usd || 0).toFixed(2) }} / ${{
-                    subscription.group.weekly_limit_usd.toFixed(2)
+                    effectiveLimit(subscription, subscription.group.weekly_limit_usd).toFixed(2)
                   }}
                 </span>
               </div>
@@ -155,13 +196,13 @@
                   :class="
                     getProgressBarClass(
                       subscription.weekly_usage_usd,
-                      subscription.group.weekly_limit_usd
+                      effectiveLimit(subscription, subscription.group.weekly_limit_usd)
                     )
                   "
                   :style="{
                     width: getProgressWidth(
                       subscription.weekly_usage_usd,
-                      subscription.group.weekly_limit_usd
+                      effectiveLimit(subscription, subscription.group.weekly_limit_usd)
                     )
                   }"
                 ></div>
@@ -186,7 +227,7 @@
                 </span>
                 <span class="text-sm text-gray-500 dark:text-dark-400">
                   ${{ (subscription.monthly_usage_usd || 0).toFixed(2) }} / ${{
-                    subscription.group.monthly_limit_usd.toFixed(2)
+                    effectiveLimit(subscription, subscription.group.monthly_limit_usd).toFixed(2)
                   }}
                 </span>
               </div>
@@ -196,13 +237,13 @@
                   :class="
                     getProgressBarClass(
                       subscription.monthly_usage_usd,
-                      subscription.group.monthly_limit_usd
+                      effectiveLimit(subscription, subscription.group.monthly_limit_usd)
                     )
                   "
                   :style="{
                     width: getProgressWidth(
                       subscription.monthly_usage_usd,
-                      subscription.group.monthly_limit_usd
+                      effectiveLimit(subscription, subscription.group.monthly_limit_usd)
                     )
                   }"
                 ></div>
@@ -224,7 +265,8 @@
               v-if="
                 !subscription.group?.daily_limit_usd &&
                 !subscription.group?.weekly_limit_usd &&
-                !subscription.group?.monthly_limit_usd
+                !subscription.group?.monthly_limit_usd &&
+                !subscription.group?.five_hour_limit_usd
               "
               class="flex items-center justify-center rounded-xl bg-gradient-to-r from-emerald-50 to-teal-50 py-6 dark:from-emerald-900/20 dark:to-teal-900/20"
             >
@@ -301,6 +343,15 @@ async function loadSubscriptions() {
   } finally {
     loading.value = false
   }
+}
+
+function effectiveLimit(
+  subscription: UserSubscription,
+  limit: number | null | undefined
+): number {
+  if (limit == null) return 0
+  const multiplier = subscription.quota_multiplier ?? 1
+  return limit * multiplier
 }
 
 function getProgressWidth(used: number | undefined, limit: number | null | undefined): string {

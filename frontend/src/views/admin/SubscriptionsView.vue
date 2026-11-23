@@ -245,8 +245,69 @@
             <span v-else class="text-sm text-gray-400 dark:text-dark-500">-</span>
           </template>
 
+          <template #cell-quota_multiplier="{ row }">
+            <button
+              type="button"
+              class="rounded-md px-2 py-1 text-sm font-medium tabular-nums text-gray-700 transition-colors hover:bg-primary-50 hover:text-primary-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:text-gray-200 dark:hover:bg-primary-900/20 dark:hover:text-primary-400 dark:focus-visible:ring-offset-dark-800"
+              :title="t('admin.subscriptions.editQuotaMultiplier')"
+              @click="openQuotaMultiplierDialog(row)"
+            >
+              {{ formatQuotaMultiplier(row.quota_multiplier) }}
+            </button>
+          </template>
+
           <template #cell-usage="{ row }">
             <div class="min-w-[280px] space-y-2">
+              <!-- Five-hour Usage -->
+              <div v-if="row.group?.five_hour_limit_usd" class="usage-row">
+                <div class="flex items-center gap-2">
+                  <span class="usage-label">{{ t('admin.subscriptions.fiveHour') }}</span>
+                  <div class="h-1.5 flex-1 rounded-full bg-gray-200 dark:bg-dark-600">
+                    <div
+                      class="h-1.5 rounded-full transition-all"
+                      :class="
+                        getProgressClass(
+                          row.five_hour_usage_usd,
+                          effectiveLimit(row.group?.five_hour_limit_usd, row.quota_multiplier)
+                        )
+                      "
+                      :style="{
+                        width: getProgressWidth(
+                          row.five_hour_usage_usd,
+                          effectiveLimit(row.group?.five_hour_limit_usd, row.quota_multiplier)
+                        )
+                      }"
+                    ></div>
+                  </div>
+                  <span class="usage-amount">
+                    ${{ row.five_hour_usage_usd?.toFixed(2) || '0.00' }}
+                    <span class="text-gray-400">/</span>
+                    ${{
+                      effectiveLimit(
+                        row.group?.five_hour_limit_usd,
+                        row.quota_multiplier
+                      )?.toFixed(2)
+                    }}
+                  </span>
+                </div>
+                <div class="reset-info" v-if="row.five_hour_window_start">
+                  <svg
+                    class="h-3 w-3"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    stroke-width="2"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+                    />
+                  </svg>
+                  <span>{{ formatResetTime(row.five_hour_window_start, 'five_hour') }}</span>
+                </div>
+              </div>
+
               <!-- Daily Usage -->
               <div v-if="row.group?.daily_limit_usd" class="usage-row">
                 <div class="flex items-center gap-2">
@@ -254,16 +315,26 @@
                   <div class="h-1.5 flex-1 rounded-full bg-gray-200 dark:bg-dark-600">
                     <div
                       class="h-1.5 rounded-full transition-all"
-                      :class="getProgressClass(row.daily_usage_usd, row.group?.daily_limit_usd)"
+                      :class="
+                        getProgressClass(
+                          row.daily_usage_usd,
+                          effectiveLimit(row.group?.daily_limit_usd, row.quota_multiplier)
+                        )
+                      "
                       :style="{
-                        width: getProgressWidth(row.daily_usage_usd, row.group?.daily_limit_usd)
+                        width: getProgressWidth(
+                          row.daily_usage_usd,
+                          effectiveLimit(row.group?.daily_limit_usd, row.quota_multiplier)
+                        )
                       }"
                     ></div>
                   </div>
                   <span class="usage-amount">
                     ${{ row.daily_usage_usd?.toFixed(2) || '0.00' }}
                     <span class="text-gray-400">/</span>
-                    ${{ row.group?.daily_limit_usd?.toFixed(2) }}
+                    ${{
+                      effectiveLimit(row.group?.daily_limit_usd, row.quota_multiplier)?.toFixed(2)
+                    }}
                   </span>
                 </div>
                 <div class="reset-info" v-if="row.daily_window_start">
@@ -291,16 +362,26 @@
                   <div class="h-1.5 flex-1 rounded-full bg-gray-200 dark:bg-dark-600">
                     <div
                       class="h-1.5 rounded-full transition-all"
-                      :class="getProgressClass(row.weekly_usage_usd, row.group?.weekly_limit_usd)"
+                      :class="
+                        getProgressClass(
+                          row.weekly_usage_usd,
+                          effectiveLimit(row.group?.weekly_limit_usd, row.quota_multiplier)
+                        )
+                      "
                       :style="{
-                        width: getProgressWidth(row.weekly_usage_usd, row.group?.weekly_limit_usd)
+                        width: getProgressWidth(
+                          row.weekly_usage_usd,
+                          effectiveLimit(row.group?.weekly_limit_usd, row.quota_multiplier)
+                        )
                       }"
                     ></div>
                   </div>
                   <span class="usage-amount">
                     ${{ row.weekly_usage_usd?.toFixed(2) || '0.00' }}
                     <span class="text-gray-400">/</span>
-                    ${{ row.group?.weekly_limit_usd?.toFixed(2) }}
+                    ${{
+                      effectiveLimit(row.group?.weekly_limit_usd, row.quota_multiplier)?.toFixed(2)
+                    }}
                   </span>
                 </div>
                 <div class="reset-info" v-if="row.weekly_window_start">
@@ -328,16 +409,26 @@
                   <div class="h-1.5 flex-1 rounded-full bg-gray-200 dark:bg-dark-600">
                     <div
                       class="h-1.5 rounded-full transition-all"
-                      :class="getProgressClass(row.monthly_usage_usd, row.group?.monthly_limit_usd)"
+                      :class="
+                        getProgressClass(
+                          row.monthly_usage_usd,
+                          effectiveLimit(row.group?.monthly_limit_usd, row.quota_multiplier)
+                        )
+                      "
                       :style="{
-                        width: getProgressWidth(row.monthly_usage_usd, row.group?.monthly_limit_usd)
+                        width: getProgressWidth(
+                          row.monthly_usage_usd,
+                          effectiveLimit(row.group?.monthly_limit_usd, row.quota_multiplier)
+                        )
                       }"
                     ></div>
                   </div>
                   <span class="usage-amount">
                     ${{ row.monthly_usage_usd?.toFixed(2) || '0.00' }}
                     <span class="text-gray-400">/</span>
-                    ${{ row.group?.monthly_limit_usd?.toFixed(2) }}
+                    ${{
+                      effectiveLimit(row.group?.monthly_limit_usd, row.quota_multiplier)?.toFixed(2)
+                    }}
                   </span>
                 </div>
                 <div class="reset-info" v-if="row.monthly_window_start">
@@ -363,7 +454,8 @@
                 v-if="
                   !row.group?.daily_limit_usd &&
                   !row.group?.weekly_limit_usd &&
-                  !row.group?.monthly_limit_usd
+                  !row.group?.monthly_limit_usd &&
+                  !row.group?.five_hour_limit_usd
                 "
                 class="flex items-center gap-2 rounded-lg bg-gradient-to-r from-emerald-50 to-teal-50 px-3 py-2 dark:from-emerald-900/20 dark:to-teal-900/20"
               >
@@ -611,6 +703,37 @@
           <input v-model.number="assignForm.validity_days" type="number" min="1" max="36500" step="1" :disabled="submitting" class="input" />
           <p class="input-hint">{{ t('admin.subscriptions.validityHint') }}</p>
         </div>
+        <div>
+          <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+            <input
+              v-model="assignQuotaMultiplierEnabled"
+              type="checkbox"
+              :disabled="submitting"
+              @change="handleAssignQuotaMultiplierToggle"
+            />
+            {{ t('admin.subscriptions.assignQuotaMultiplier') }}
+          </label>
+          <transition name="quota-multiplier">
+            <div v-if="assignQuotaMultiplierEnabled" class="mt-2">
+              <div class="flex items-center gap-3">
+                <input
+                  v-model.number="assignQuotaMultiplier"
+                  type="number"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  :disabled="submitting"
+                  class="input max-w-[180px]"
+                  :placeholder="t('admin.subscriptions.quotaMultiplierPlaceholder')"
+                />
+                <span class="text-sm font-medium tabular-nums text-gray-500 dark:text-gray-400">
+                  {{ formatQuotaMultiplier(assignQuotaMultiplier) }}
+                </span>
+              </div>
+              <p class="input-hint">{{ t('admin.subscriptions.assignQuotaMultiplierHint') }}</p>
+            </div>
+          </transition>
+        </div>
         <div v-if="batchAssignResult" class="space-y-2 text-sm" role="status" data-test="batch-assign-result">
           <p>{{ t('admin.subscriptions.batchAssign.result', { success: batchAssignResult.success_count, failed: batchAssignResult.failed_count }) }}</p>
           <ul v-if="batchAssignResult.errors.length" class="max-h-40 space-y-1 overflow-y-auto text-red-600 dark:text-red-400">
@@ -747,16 +870,105 @@
       @cancel="showRestoreDialog = false"
     />
 
-    <!-- Reset Quota Confirmation Dialog -->
-    <ConfirmDialog
+    <!-- Reset Quota Dialog -->
+    <BaseDialog
       :show="showResetQuotaConfirm"
       :title="t('admin.subscriptions.resetQuotaTitle')"
-      :message="t('admin.subscriptions.resetQuotaConfirm', { user: resettingSubscription?.user?.email })"
-      :confirm-text="t('admin.subscriptions.resetQuota')"
-      :cancel-text="t('common.cancel')"
-      @confirm="confirmResetQuota"
-      @cancel="showResetQuotaConfirm = false"
-    />
+      width="normal"
+      :show-close-button="!resettingQuota"
+      :close-on-escape="!resettingQuota"
+      @close="closeResetQuotaDialog"
+    >
+      <div class="space-y-4">
+        <p class="text-sm text-gray-600 dark:text-gray-400">
+          {{ t('admin.subscriptions.resetQuotaConfirm', { user: resettingSubscription?.user?.email }) }}
+        </p>
+        <fieldset :disabled="resettingQuota" class="space-y-3">
+          <legend class="text-sm font-medium text-gray-700 dark:text-gray-200">
+            {{ t('admin.subscriptions.bulk.resetWindows') }}
+          </legend>
+          <div class="flex flex-wrap gap-5">
+            <label
+              v-for="window in resetQuotaWindowKeys"
+              :key="window"
+              class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300"
+            >
+              <input
+                v-model="resetQuotaWindows[window]"
+                :name="`reset-${window}`"
+                type="checkbox"
+                class="h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                :disabled="resettingQuota"
+              />
+              {{ t(`admin.subscriptions.${window}`) }}
+            </label>
+          </div>
+          <p class="text-xs text-gray-500 dark:text-gray-400">
+            {{ t('admin.subscriptions.bulk.resetHint') }}
+          </p>
+        </fieldset>
+      </div>
+      <template #footer>
+        <div class="flex justify-end gap-3">
+          <button type="button" class="btn btn-secondary" :disabled="resettingQuota" @click="closeResetQuotaDialog">
+            {{ t('common.cancel') }}
+          </button>
+          <button
+            type="button"
+            class="btn btn-primary"
+            :disabled="resettingQuota || !resetQuotaHasSelection"
+            @click="confirmResetQuota"
+          >
+            {{ resettingQuota ? t('admin.subscriptions.resettingQuota') : t('admin.subscriptions.resetQuota') }}
+          </button>
+        </div>
+      </template>
+    </BaseDialog>
+    <!-- Quota Multiplier Edit Dialog -->
+    <BaseDialog
+      :show="showQuotaMultiplierDialog"
+      :title="t('admin.subscriptions.editQuotaMultiplierTitle')"
+      width="narrow"
+      :show-close-button="!savingQuotaMultiplier"
+      :close-on-escape="!savingQuotaMultiplier"
+      @close="closeQuotaMultiplierDialog"
+    >
+      <div class="space-y-4">
+        <p v-if="editingQuotaSubscription" class="text-sm text-gray-600 dark:text-gray-400">
+          {{ editingQuotaSubscription.user?.email || t('admin.redeem.userPrefix', { id: editingQuotaSubscription.user_id }) }}
+        </p>
+        <div>
+          <label class="input-label">{{ t('admin.subscriptions.quotaMultiplier') }}</label>
+          <div class="flex items-center gap-3">
+            <input
+              v-model.number="quotaMultiplierForm.value"
+              type="number"
+              min="0"
+              max="1"
+              step="0.05"
+              :disabled="savingQuotaMultiplier"
+              class="input max-w-[180px]"
+              :placeholder="t('admin.subscriptions.quotaMultiplierPlaceholder')"
+            />
+            <span class="text-sm font-medium tabular-nums text-gray-500 dark:text-gray-400">
+              {{ formatQuotaMultiplier(quotaMultiplierForm.value) }}
+            </span>
+          </div>
+          <p class="input-hint">{{ t('admin.subscriptions.quotaMultiplierHint') }}</p>
+        </div>
+      </div>
+      <template #footer>
+        <div class="flex justify-end gap-3">
+          <button type="button" class="btn btn-secondary" :disabled="savingQuotaMultiplier" @click="closeQuotaMultiplierDialog">
+            {{ t('common.cancel') }}
+          </button>
+          <button type="button" class="btn btn-primary" :disabled="savingQuotaMultiplier" @click="saveQuotaMultiplier">
+            {{ savingQuotaMultiplier ? t('common.saving') : t('common.save') }}
+          </button>
+        </div>
+      </template>
+    </BaseDialog>
+
     <!-- Subscription Guide Modal -->
     <teleport to="body">
       <transition name="modal">
@@ -930,6 +1142,11 @@ const allColumns = computed<Column[]>(() => [
     sortable: false
   },
   { key: 'group', label: t('admin.subscriptions.columns.group'), sortable: false },
+  {
+    key: 'quota_multiplier',
+    label: t('admin.subscriptions.columns.quotaMultiplier'),
+    sortable: false
+  },
   { key: 'usage', label: t('admin.subscriptions.columns.usage'), sortable: false },
   { key: 'expires_at', label: t('admin.subscriptions.columns.expires'), sortable: true },
   { key: 'status', label: t('admin.subscriptions.columns.status'), sortable: true },
@@ -1099,9 +1316,92 @@ const assignForm = reactive({
   validity_days: 30
 })
 
+const assignQuotaMultiplierEnabled = ref(false)
+const assignQuotaMultiplier = ref<number | string | null>(null)
+const handleAssignQuotaMultiplierToggle = () => {
+  if (assignQuotaMultiplierEnabled.value && assignQuotaMultiplier.value == null) {
+    assignQuotaMultiplier.value = 1
+  }
+}
+
 const extendForm = reactive({
   days: 30
 })
+
+type ResetQuotaWindow = 'daily' | 'weekly' | 'monthly' | 'five_hour'
+const resetQuotaWindowKeys: ResetQuotaWindow[] = ['five_hour', 'daily', 'weekly', 'monthly']
+const resetQuotaWindows = reactive<Record<ResetQuotaWindow, boolean>>({
+  daily: true,
+  weekly: true,
+  monthly: true,
+  five_hour: true
+})
+const resetQuotaHasSelection = computed(() =>
+  resetQuotaWindowKeys.some((window) => resetQuotaWindows[window])
+)
+
+const showQuotaMultiplierDialog = ref(false)
+const editingQuotaSubscription = ref<UserSubscription | null>(null)
+const quotaMultiplierForm = reactive({ value: 1 as number | string | null })
+const savingQuotaMultiplier = ref(false)
+
+const effectiveLimit = (
+  limit: number | null | undefined,
+  multiplier: number | null | undefined
+): number | null => {
+  if (limit == null) return null
+  const value = multiplier == null ? 1 : multiplier
+  return limit * value
+}
+
+const formatQuotaMultiplier = (value: number | string | null | undefined): string => {
+  if (value === null || value === undefined || value === '') return '—'
+  const numeric = Number(value)
+  if (!Number.isFinite(numeric)) return '—'
+  return `${Number((numeric * 100).toFixed(1))}%`
+}
+
+const parseQuotaMultiplierInput = (value: number | string | null | undefined): number | null => {
+  if (value === null || value === undefined || value === '') return null
+  const numeric = Number(value)
+  return Number.isFinite(numeric) ? numeric : null
+}
+
+const openQuotaMultiplierDialog = (subscription: UserSubscription) => {
+  editingQuotaSubscription.value = subscription
+  quotaMultiplierForm.value = subscription.quota_multiplier ?? 1
+  showQuotaMultiplierDialog.value = true
+}
+
+const closeQuotaMultiplierDialog = () => {
+  if (savingQuotaMultiplier.value) return
+  showQuotaMultiplierDialog.value = false
+  editingQuotaSubscription.value = null
+}
+
+const saveQuotaMultiplier = async () => {
+  if (!editingQuotaSubscription.value || savingQuotaMultiplier.value) return
+  const value = parseQuotaMultiplierInput(quotaMultiplierForm.value)
+  if (value === null || value < 0 || value > 1) {
+    appStore.showError(t('admin.subscriptions.quotaMultiplierRange'))
+    return
+  }
+  savingQuotaMultiplier.value = true
+  try {
+    await adminAPI.subscriptions.updateQuotaMultiplier(editingQuotaSubscription.value.id, value)
+    appStore.showSuccess(t('admin.subscriptions.quotaMultiplierSaved'))
+    showQuotaMultiplierDialog.value = false
+    editingQuotaSubscription.value = null
+    await loadSubscriptions()
+  } catch (error: any) {
+    appStore.showError(
+      error.response?.data?.detail || t('admin.subscriptions.failedToSaveQuotaMultiplier')
+    )
+    console.error('Error updating quota multiplier:', error)
+  } finally {
+    savingQuotaMultiplier.value = false
+  }
+}
 
 // Group options for filter (all groups)
 const groupOptions = computed(() => [
@@ -1333,6 +1633,8 @@ const closeAssignModal = () => {
   assignForm.user_id = null
   assignForm.group_id = null
   assignForm.validity_days = 30
+  assignQuotaMultiplierEnabled.value = false
+  assignQuotaMultiplier.value = null
   // Clear user search state
   selectedUser.value = null
   userSearchKeyword.value = ''
@@ -1354,6 +1656,16 @@ const handleAssignSubscription = async () => {
     appStore.showError(t('admin.subscriptions.validityDaysRequired'))
     return
   }
+  const quotaMultiplier = assignQuotaMultiplierEnabled.value
+    ? parseQuotaMultiplierInput(assignQuotaMultiplier.value)
+    : null
+  if (
+    assignQuotaMultiplierEnabled.value &&
+    (quotaMultiplier === null || quotaMultiplier < 0 || quotaMultiplier > 1)
+  ) {
+    appStore.showError(t('admin.subscriptions.quotaMultiplierRange'))
+    return
+  }
 
   submitting.value = true
   try {
@@ -1361,7 +1673,8 @@ const handleAssignSubscription = async () => {
       batchAssignResult.value = await adminAPI.subscriptions.bulkAssign({
         user_ids: assignUsers.value.map((user) => user.id),
         group_id: assignForm.group_id,
-        validity_days: assignForm.validity_days
+        validity_days: assignForm.validity_days,
+        ...(quotaMultiplier === null ? {} : { quota_multiplier: quotaMultiplier })
       })
       const result = batchAssignResult.value
       const successIds = new Set(result.subscriptions.map((subscription) => subscription.user_id))
@@ -1375,7 +1688,8 @@ const handleAssignSubscription = async () => {
     await adminAPI.subscriptions.assign({
       user_id: assignForm.user_id!,
       group_id: assignForm.group_id,
-      validity_days: assignForm.validity_days
+      validity_days: assignForm.validity_days,
+      ...(quotaMultiplier === null ? {} : { quota_multiplier: quotaMultiplier })
     })
     appStore.showSuccess(t('admin.subscriptions.subscriptionAssigned'))
     submitting.value = false
@@ -1471,15 +1785,29 @@ const confirmRestore = async () => {
 
 const handleResetQuota = (subscription: UserSubscription) => {
   resettingSubscription.value = subscription
+  resetQuotaWindowKeys.forEach((window) => {
+    resetQuotaWindows[window] = true
+  })
   showResetQuotaConfirm.value = true
+}
+
+const closeResetQuotaDialog = () => {
+  if (resettingQuota.value) return
+  showResetQuotaConfirm.value = false
+  resettingSubscription.value = null
 }
 
 const confirmResetQuota = async () => {
   if (!resettingSubscription.value) return
-  if (resettingQuota.value) return
+  if (resettingQuota.value || !resetQuotaHasSelection.value) return
   resettingQuota.value = true
   try {
-    await adminAPI.subscriptions.resetQuota(resettingSubscription.value.id, { daily: true, weekly: true, monthly: true })
+    await adminAPI.subscriptions.resetQuota(resettingSubscription.value.id, {
+      daily: resetQuotaWindows.daily,
+      weekly: resetQuotaWindows.weekly,
+      monthly: resetQuotaWindows.monthly,
+      five_hour: resetQuotaWindows.five_hour
+    })
     appStore.showSuccess(t('admin.subscriptions.quotaResetSuccess'))
     showResetQuotaConfirm.value = false
     resettingSubscription.value = null
@@ -1571,7 +1899,10 @@ const formatDailyUsageWindow = (subscription: UserSubscription): string => {
 }
 
 // Format reset time based on window start and period type
-const formatResetTime = (windowStart: string | null, period: 'daily' | 'weekly' | 'monthly'): string => {
+const formatResetTime = (
+  windowStart: string | null,
+  period: 'daily' | 'weekly' | 'monthly' | 'five_hour'
+): string => {
   if (!windowStart) return t('admin.subscriptions.windowNotActive')
 
   const start = new Date(windowStart)
@@ -1580,6 +1911,9 @@ const formatResetTime = (windowStart: string | null, period: 'daily' | 'weekly' 
   // Calculate reset time based on period
   let resetTime: Date
   switch (period) {
+    case 'five_hour':
+      resetTime = new Date(start.getTime() + 5 * 60 * 60 * 1000)
+      break
     case 'daily':
       resetTime = new Date(start.getTime() + 24 * 60 * 60 * 1000)
       break
@@ -1640,5 +1974,24 @@ onUnmounted(() => {
 
 .reset-info {
   @apply flex items-center gap-1 pl-12 text-[10px] text-blue-600 dark:text-blue-400;
+}
+
+.quota-multiplier-enter-active,
+.quota-multiplier-leave-active {
+  transition:
+    opacity 0.18s ease,
+    transform 0.18s ease,
+    max-height 0.18s ease,
+    margin-top 0.18s ease;
+  overflow: hidden;
+  max-height: 120px;
+}
+
+.quota-multiplier-enter-from,
+.quota-multiplier-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
+  max-height: 0;
+  margin-top: 0;
 }
 </style>

@@ -147,6 +147,20 @@ func (_c *UserSubscriptionCreate) SetNillableMonthlyWindowStart(v *time.Time) *U
 	return _c
 }
 
+// SetFiveHourWindowStart sets the "five_hour_window_start" field.
+func (_c *UserSubscriptionCreate) SetFiveHourWindowStart(v time.Time) *UserSubscriptionCreate {
+	_c.mutation.SetFiveHourWindowStart(v)
+	return _c
+}
+
+// SetNillableFiveHourWindowStart sets the "five_hour_window_start" field if the given value is not nil.
+func (_c *UserSubscriptionCreate) SetNillableFiveHourWindowStart(v *time.Time) *UserSubscriptionCreate {
+	if v != nil {
+		_c.SetFiveHourWindowStart(*v)
+	}
+	return _c
+}
+
 // SetDailyUsageUsd sets the "daily_usage_usd" field.
 func (_c *UserSubscriptionCreate) SetDailyUsageUsd(v float64) *UserSubscriptionCreate {
 	_c.mutation.SetDailyUsageUsd(v)
@@ -185,6 +199,34 @@ func (_c *UserSubscriptionCreate) SetMonthlyUsageUsd(v float64) *UserSubscriptio
 func (_c *UserSubscriptionCreate) SetNillableMonthlyUsageUsd(v *float64) *UserSubscriptionCreate {
 	if v != nil {
 		_c.SetMonthlyUsageUsd(*v)
+	}
+	return _c
+}
+
+// SetFiveHourUsageUsd sets the "five_hour_usage_usd" field.
+func (_c *UserSubscriptionCreate) SetFiveHourUsageUsd(v float64) *UserSubscriptionCreate {
+	_c.mutation.SetFiveHourUsageUsd(v)
+	return _c
+}
+
+// SetNillableFiveHourUsageUsd sets the "five_hour_usage_usd" field if the given value is not nil.
+func (_c *UserSubscriptionCreate) SetNillableFiveHourUsageUsd(v *float64) *UserSubscriptionCreate {
+	if v != nil {
+		_c.SetFiveHourUsageUsd(*v)
+	}
+	return _c
+}
+
+// SetQuotaMultiplier sets the "quota_multiplier" field.
+func (_c *UserSubscriptionCreate) SetQuotaMultiplier(v float64) *UserSubscriptionCreate {
+	_c.mutation.SetQuotaMultiplier(v)
+	return _c
+}
+
+// SetNillableQuotaMultiplier sets the "quota_multiplier" field if the given value is not nil.
+func (_c *UserSubscriptionCreate) SetNillableQuotaMultiplier(v *float64) *UserSubscriptionCreate {
+	if v != nil {
+		_c.SetQuotaMultiplier(*v)
 	}
 	return _c
 }
@@ -342,6 +384,14 @@ func (_c *UserSubscriptionCreate) defaults() error {
 		v := usersubscription.DefaultMonthlyUsageUsd
 		_c.mutation.SetMonthlyUsageUsd(v)
 	}
+	if _, ok := _c.mutation.FiveHourUsageUsd(); !ok {
+		v := usersubscription.DefaultFiveHourUsageUsd
+		_c.mutation.SetFiveHourUsageUsd(v)
+	}
+	if _, ok := _c.mutation.QuotaMultiplier(); !ok {
+		v := usersubscription.DefaultQuotaMultiplier
+		_c.mutation.SetQuotaMultiplier(v)
+	}
 	if _, ok := _c.mutation.AssignedAt(); !ok {
 		if usersubscription.DefaultAssignedAt == nil {
 			return fmt.Errorf("ent: uninitialized usersubscription.DefaultAssignedAt (forgotten import ent/runtime?)")
@@ -388,6 +438,12 @@ func (_c *UserSubscriptionCreate) check() error {
 	}
 	if _, ok := _c.mutation.MonthlyUsageUsd(); !ok {
 		return &ValidationError{Name: "monthly_usage_usd", err: errors.New(`ent: missing required field "UserSubscription.monthly_usage_usd"`)}
+	}
+	if _, ok := _c.mutation.FiveHourUsageUsd(); !ok {
+		return &ValidationError{Name: "five_hour_usage_usd", err: errors.New(`ent: missing required field "UserSubscription.five_hour_usage_usd"`)}
+	}
+	if _, ok := _c.mutation.QuotaMultiplier(); !ok {
+		return &ValidationError{Name: "quota_multiplier", err: errors.New(`ent: missing required field "UserSubscription.quota_multiplier"`)}
 	}
 	if _, ok := _c.mutation.AssignedAt(); !ok {
 		return &ValidationError{Name: "assigned_at", err: errors.New(`ent: missing required field "UserSubscription.assigned_at"`)}
@@ -461,6 +517,10 @@ func (_c *UserSubscriptionCreate) createSpec() (*UserSubscription, *sqlgraph.Cre
 		_spec.SetField(usersubscription.FieldMonthlyWindowStart, field.TypeTime, value)
 		_node.MonthlyWindowStart = &value
 	}
+	if value, ok := _c.mutation.FiveHourWindowStart(); ok {
+		_spec.SetField(usersubscription.FieldFiveHourWindowStart, field.TypeTime, value)
+		_node.FiveHourWindowStart = &value
+	}
 	if value, ok := _c.mutation.DailyUsageUsd(); ok {
 		_spec.SetField(usersubscription.FieldDailyUsageUsd, field.TypeFloat64, value)
 		_node.DailyUsageUsd = value
@@ -472,6 +532,14 @@ func (_c *UserSubscriptionCreate) createSpec() (*UserSubscription, *sqlgraph.Cre
 	if value, ok := _c.mutation.MonthlyUsageUsd(); ok {
 		_spec.SetField(usersubscription.FieldMonthlyUsageUsd, field.TypeFloat64, value)
 		_node.MonthlyUsageUsd = value
+	}
+	if value, ok := _c.mutation.FiveHourUsageUsd(); ok {
+		_spec.SetField(usersubscription.FieldFiveHourUsageUsd, field.TypeFloat64, value)
+		_node.FiveHourUsageUsd = value
+	}
+	if value, ok := _c.mutation.QuotaMultiplier(); ok {
+		_spec.SetField(usersubscription.FieldQuotaMultiplier, field.TypeFloat64, value)
+		_node.QuotaMultiplier = value
 	}
 	if value, ok := _c.mutation.AssignedAt(); ok {
 		_spec.SetField(usersubscription.FieldAssignedAt, field.TypeTime, value)
@@ -744,6 +812,24 @@ func (u *UserSubscriptionUpsert) ClearMonthlyWindowStart() *UserSubscriptionUpse
 	return u
 }
 
+// SetFiveHourWindowStart sets the "five_hour_window_start" field.
+func (u *UserSubscriptionUpsert) SetFiveHourWindowStart(v time.Time) *UserSubscriptionUpsert {
+	u.Set(usersubscription.FieldFiveHourWindowStart, v)
+	return u
+}
+
+// UpdateFiveHourWindowStart sets the "five_hour_window_start" field to the value that was provided on create.
+func (u *UserSubscriptionUpsert) UpdateFiveHourWindowStart() *UserSubscriptionUpsert {
+	u.SetExcluded(usersubscription.FieldFiveHourWindowStart)
+	return u
+}
+
+// ClearFiveHourWindowStart clears the value of the "five_hour_window_start" field.
+func (u *UserSubscriptionUpsert) ClearFiveHourWindowStart() *UserSubscriptionUpsert {
+	u.SetNull(usersubscription.FieldFiveHourWindowStart)
+	return u
+}
+
 // SetDailyUsageUsd sets the "daily_usage_usd" field.
 func (u *UserSubscriptionUpsert) SetDailyUsageUsd(v float64) *UserSubscriptionUpsert {
 	u.Set(usersubscription.FieldDailyUsageUsd, v)
@@ -795,6 +881,42 @@ func (u *UserSubscriptionUpsert) UpdateMonthlyUsageUsd() *UserSubscriptionUpsert
 // AddMonthlyUsageUsd adds v to the "monthly_usage_usd" field.
 func (u *UserSubscriptionUpsert) AddMonthlyUsageUsd(v float64) *UserSubscriptionUpsert {
 	u.Add(usersubscription.FieldMonthlyUsageUsd, v)
+	return u
+}
+
+// SetFiveHourUsageUsd sets the "five_hour_usage_usd" field.
+func (u *UserSubscriptionUpsert) SetFiveHourUsageUsd(v float64) *UserSubscriptionUpsert {
+	u.Set(usersubscription.FieldFiveHourUsageUsd, v)
+	return u
+}
+
+// UpdateFiveHourUsageUsd sets the "five_hour_usage_usd" field to the value that was provided on create.
+func (u *UserSubscriptionUpsert) UpdateFiveHourUsageUsd() *UserSubscriptionUpsert {
+	u.SetExcluded(usersubscription.FieldFiveHourUsageUsd)
+	return u
+}
+
+// AddFiveHourUsageUsd adds v to the "five_hour_usage_usd" field.
+func (u *UserSubscriptionUpsert) AddFiveHourUsageUsd(v float64) *UserSubscriptionUpsert {
+	u.Add(usersubscription.FieldFiveHourUsageUsd, v)
+	return u
+}
+
+// SetQuotaMultiplier sets the "quota_multiplier" field.
+func (u *UserSubscriptionUpsert) SetQuotaMultiplier(v float64) *UserSubscriptionUpsert {
+	u.Set(usersubscription.FieldQuotaMultiplier, v)
+	return u
+}
+
+// UpdateQuotaMultiplier sets the "quota_multiplier" field to the value that was provided on create.
+func (u *UserSubscriptionUpsert) UpdateQuotaMultiplier() *UserSubscriptionUpsert {
+	u.SetExcluded(usersubscription.FieldQuotaMultiplier)
+	return u
+}
+
+// AddQuotaMultiplier adds v to the "quota_multiplier" field.
+func (u *UserSubscriptionUpsert) AddQuotaMultiplier(v float64) *UserSubscriptionUpsert {
+	u.Add(usersubscription.FieldQuotaMultiplier, v)
 	return u
 }
 
@@ -1059,6 +1181,27 @@ func (u *UserSubscriptionUpsertOne) ClearMonthlyWindowStart() *UserSubscriptionU
 	})
 }
 
+// SetFiveHourWindowStart sets the "five_hour_window_start" field.
+func (u *UserSubscriptionUpsertOne) SetFiveHourWindowStart(v time.Time) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetFiveHourWindowStart(v)
+	})
+}
+
+// UpdateFiveHourWindowStart sets the "five_hour_window_start" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertOne) UpdateFiveHourWindowStart() *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateFiveHourWindowStart()
+	})
+}
+
+// ClearFiveHourWindowStart clears the value of the "five_hour_window_start" field.
+func (u *UserSubscriptionUpsertOne) ClearFiveHourWindowStart() *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.ClearFiveHourWindowStart()
+	})
+}
+
 // SetDailyUsageUsd sets the "daily_usage_usd" field.
 func (u *UserSubscriptionUpsertOne) SetDailyUsageUsd(v float64) *UserSubscriptionUpsertOne {
 	return u.Update(func(s *UserSubscriptionUpsert) {
@@ -1119,6 +1262,48 @@ func (u *UserSubscriptionUpsertOne) AddMonthlyUsageUsd(v float64) *UserSubscript
 func (u *UserSubscriptionUpsertOne) UpdateMonthlyUsageUsd() *UserSubscriptionUpsertOne {
 	return u.Update(func(s *UserSubscriptionUpsert) {
 		s.UpdateMonthlyUsageUsd()
+	})
+}
+
+// SetFiveHourUsageUsd sets the "five_hour_usage_usd" field.
+func (u *UserSubscriptionUpsertOne) SetFiveHourUsageUsd(v float64) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetFiveHourUsageUsd(v)
+	})
+}
+
+// AddFiveHourUsageUsd adds v to the "five_hour_usage_usd" field.
+func (u *UserSubscriptionUpsertOne) AddFiveHourUsageUsd(v float64) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.AddFiveHourUsageUsd(v)
+	})
+}
+
+// UpdateFiveHourUsageUsd sets the "five_hour_usage_usd" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertOne) UpdateFiveHourUsageUsd() *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateFiveHourUsageUsd()
+	})
+}
+
+// SetQuotaMultiplier sets the "quota_multiplier" field.
+func (u *UserSubscriptionUpsertOne) SetQuotaMultiplier(v float64) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetQuotaMultiplier(v)
+	})
+}
+
+// AddQuotaMultiplier adds v to the "quota_multiplier" field.
+func (u *UserSubscriptionUpsertOne) AddQuotaMultiplier(v float64) *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.AddQuotaMultiplier(v)
+	})
+}
+
+// UpdateQuotaMultiplier sets the "quota_multiplier" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertOne) UpdateQuotaMultiplier() *UserSubscriptionUpsertOne {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateQuotaMultiplier()
 	})
 }
 
@@ -1557,6 +1742,27 @@ func (u *UserSubscriptionUpsertBulk) ClearMonthlyWindowStart() *UserSubscription
 	})
 }
 
+// SetFiveHourWindowStart sets the "five_hour_window_start" field.
+func (u *UserSubscriptionUpsertBulk) SetFiveHourWindowStart(v time.Time) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetFiveHourWindowStart(v)
+	})
+}
+
+// UpdateFiveHourWindowStart sets the "five_hour_window_start" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertBulk) UpdateFiveHourWindowStart() *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateFiveHourWindowStart()
+	})
+}
+
+// ClearFiveHourWindowStart clears the value of the "five_hour_window_start" field.
+func (u *UserSubscriptionUpsertBulk) ClearFiveHourWindowStart() *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.ClearFiveHourWindowStart()
+	})
+}
+
 // SetDailyUsageUsd sets the "daily_usage_usd" field.
 func (u *UserSubscriptionUpsertBulk) SetDailyUsageUsd(v float64) *UserSubscriptionUpsertBulk {
 	return u.Update(func(s *UserSubscriptionUpsert) {
@@ -1617,6 +1823,48 @@ func (u *UserSubscriptionUpsertBulk) AddMonthlyUsageUsd(v float64) *UserSubscrip
 func (u *UserSubscriptionUpsertBulk) UpdateMonthlyUsageUsd() *UserSubscriptionUpsertBulk {
 	return u.Update(func(s *UserSubscriptionUpsert) {
 		s.UpdateMonthlyUsageUsd()
+	})
+}
+
+// SetFiveHourUsageUsd sets the "five_hour_usage_usd" field.
+func (u *UserSubscriptionUpsertBulk) SetFiveHourUsageUsd(v float64) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetFiveHourUsageUsd(v)
+	})
+}
+
+// AddFiveHourUsageUsd adds v to the "five_hour_usage_usd" field.
+func (u *UserSubscriptionUpsertBulk) AddFiveHourUsageUsd(v float64) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.AddFiveHourUsageUsd(v)
+	})
+}
+
+// UpdateFiveHourUsageUsd sets the "five_hour_usage_usd" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertBulk) UpdateFiveHourUsageUsd() *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateFiveHourUsageUsd()
+	})
+}
+
+// SetQuotaMultiplier sets the "quota_multiplier" field.
+func (u *UserSubscriptionUpsertBulk) SetQuotaMultiplier(v float64) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.SetQuotaMultiplier(v)
+	})
+}
+
+// AddQuotaMultiplier adds v to the "quota_multiplier" field.
+func (u *UserSubscriptionUpsertBulk) AddQuotaMultiplier(v float64) *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.AddQuotaMultiplier(v)
+	})
+}
+
+// UpdateQuotaMultiplier sets the "quota_multiplier" field to the value that was provided on create.
+func (u *UserSubscriptionUpsertBulk) UpdateQuotaMultiplier() *UserSubscriptionUpsertBulk {
+	return u.Update(func(s *UserSubscriptionUpsert) {
+		s.UpdateQuotaMultiplier()
 	})
 }
 

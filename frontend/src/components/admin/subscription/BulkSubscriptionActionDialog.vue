@@ -135,9 +135,9 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
-const quotaWindows = ['daily', 'weekly', 'monthly'] as const
+const quotaWindows = ['five_hour', 'daily', 'weekly', 'monthly'] as const
 const days = ref<number | string>(30)
-const windows = reactive({ daily: true, weekly: true, monthly: true })
+const windows = reactive({ daily: true, weekly: true, monthly: true, five_hour: true })
 const submitting = ref(false)
 const requestError = ref('')
 const result = shallowRef<SubscriptionBulkActionResult | null>(null)

@@ -15,9 +15,11 @@ export interface SubscriptionSummary {
     id: number
     group_name: string
     status: string
+    five_hour_progress: number | null
     daily_progress: number | null
     weekly_progress: number | null
     monthly_progress: number | null
+    quota_multiplier?: number
     expires_at: string | null
     days_remaining: number | null
   }>

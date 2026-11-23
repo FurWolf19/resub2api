@@ -592,6 +592,7 @@ export interface Group {
   daily_limit_usd: number | null
   weekly_limit_usd: number | null
   monthly_limit_usd: number | null
+  five_hour_limit_usd: number | null
   long_context_pricing_enabled: boolean
   // 图片生成计费配置
   allow_image_generation: boolean
@@ -817,6 +818,7 @@ export interface CreateGroupRequest {
   daily_limit_usd?: number | null
   weekly_limit_usd?: number | null
   monthly_limit_usd?: number | null
+  five_hour_limit_usd?: number | null
   long_context_pricing_enabled?: boolean
   force_openai_fast?: boolean
   force_openai_ultrafast?: boolean
@@ -886,6 +888,7 @@ export interface UpdateGroupRequest {
   daily_limit_usd?: number | null
   weekly_limit_usd?: number | null
   monthly_limit_usd?: number | null
+  five_hour_limit_usd?: number | null
   long_context_pricing_enabled?: boolean
   force_openai_fast?: boolean
   force_openai_ultrafast?: boolean
@@ -2196,9 +2199,12 @@ export interface UserSubscription {
   daily_usage_usd: number
   weekly_usage_usd: number
   monthly_usage_usd: number
+  five_hour_usage_usd: number
   daily_window_start: string | null
   weekly_window_start: string | null
   monthly_window_start: string | null
+  five_hour_window_start: string | null
+  quota_multiplier: number
   created_at: string
   updated_at: string
   revoked_at?: string | null
@@ -2209,6 +2215,13 @@ export interface UserSubscription {
 
 export interface SubscriptionProgress {
   subscription_id: number
+  quota_multiplier?: number
+  five_hour?: {
+    used: number
+    limit: number | null
+    percentage: number
+    reset_in_seconds: number | null
+  } | null
   daily: {
     used: number
     limit: number | null
@@ -2235,12 +2248,14 @@ export interface AssignSubscriptionRequest {
   user_id: number
   group_id: number
   validity_days?: number
+  quota_multiplier?: number
 }
 
 export interface BulkAssignSubscriptionRequest {
   user_ids: number[]
   group_id: number
   validity_days?: number
+  quota_multiplier?: number
 }
 
 export interface ExtendSubscriptionRequest {

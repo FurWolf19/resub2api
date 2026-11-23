@@ -38,6 +38,8 @@ var (
 	ErrDailyLimitExceeded          = infraerrors.TooManyRequests("DAILY_LIMIT_EXCEEDED", "daily usage limit exceeded")
 	ErrWeeklyLimitExceeded         = infraerrors.TooManyRequests("WEEKLY_LIMIT_EXCEEDED", "weekly usage limit exceeded")
 	ErrMonthlyLimitExceeded        = infraerrors.TooManyRequests("MONTHLY_LIMIT_EXCEEDED", "monthly usage limit exceeded")
+	ErrFiveHourLimitExceeded       = infraerrors.TooManyRequests("FIVE_HOUR_LIMIT_EXCEEDED", "five-hour usage limit exceeded")
+	ErrInvalidQuotaMultiplier      = infraerrors.BadRequest("INVALID_QUOTA_MULTIPLIER", "quota_multiplier must be between 0 and 1")
 	ErrSubscriptionNilInput        = infraerrors.BadRequest("SUBSCRIPTION_NIL_INPUT", "subscription input cannot be nil")
 	ErrAdjustWouldExpire           = infraerrors.BadRequest("ADJUST_WOULD_EXPIRE", "adjustment would result in expired subscription (remaining days must be > 0)")
 )
@@ -192,11 +194,12 @@ func (s *SubscriptionService) invalidateSubscriptionCaches(userID, groupID int64
 
 // AssignSubscriptionInput 分配订阅输入
 type AssignSubscriptionInput struct {
-	UserID       int64
-	GroupID      int64
-	ValidityDays int
-	AssignedBy   int64
-	Notes        string
+	UserID          int64
+	GroupID         int64
+	ValidityDays    int
+	AssignedBy      int64
+	Notes           string
+	QuotaMultiplier *float64
 }
 
 // AssignSubscription 分配订阅给用户（不允许重复分配）
@@ -226,6 +229,9 @@ func (s *SubscriptionService) assignOrExtendSubscription(ctx context.Context, in
 	}
 	if !group.IsSubscriptionType() {
 		return nil, false, ErrGroupNotSubscriptionType
+	}
+	if err := validateQuotaMultiplier(input.QuotaMultiplier); err != nil {
+		return nil, false, err
 	}
 
 	// 查询是否已有订阅
@@ -390,9 +396,11 @@ func renewedSubscriptionTerm(existingSub *UserSubscription, notes string, starts
 	renewed.DailyWindowStart = &dailyWindowStart
 	renewed.WeeklyWindowStart = &periodicWindowStart
 	renewed.MonthlyWindowStart = &periodicWindowStart
+	renewed.FiveHourWindowStart = nil
 	renewed.DailyUsageUSD = 0
 	renewed.WeeklyUsageUSD = 0
 	renewed.MonthlyUsageUSD = 0
+	renewed.FiveHourUsageUSD = 0
 	renewed.Notes = appendSubscriptionNotes(existingSub.Notes, notes)
 	return &renewed
 }
@@ -407,6 +415,16 @@ func appendSubscriptionNotes(existingNotes, newNotes string) string {
 	return existingNotes + "\n" + newNotes
 }
 
+func validateQuotaMultiplier(multiplier *float64) error {
+	if multiplier == nil {
+		return nil
+	}
+	if *multiplier < 0 || *multiplier > 1 {
+		return ErrInvalidQuotaMultiplier
+	}
+	return nil
+}
+
 // createSubscription 创建新订阅（内部方法）
 func (s *SubscriptionService) createSubscription(ctx context.Context, input *AssignSubscriptionInput) (*UserSubscription, error) {
 	validityDays := input.ValidityDays
@@ -416,6 +434,13 @@ func (s *SubscriptionService) createSubscription(ctx context.Context, input *Ass
 	if validityDays > MaxValidityDays {
 		validityDays = MaxValidityDays
 	}
+	if err := validateQuotaMultiplier(input.QuotaMultiplier); err != nil {
+		return nil, err
+	}
+	quotaMultiplier := 1.0
+	if input.QuotaMultiplier != nil {
+		quotaMultiplier = *input.QuotaMultiplier
+	}
 
 	now := time.Now()
 	expiresAt := now.AddDate(0, 0, validityDays)
@@ -424,15 +449,16 @@ func (s *SubscriptionService) createSubscription(ctx context.Context, input *Ass
 	}
 
 	sub := &UserSubscription{
-		UserID:     input.UserID,
-		GroupID:    input.GroupID,
-		StartsAt:   now,
-		ExpiresAt:  expiresAt,
-		Status:     SubscriptionStatusActive,
-		AssignedAt: now,
-		Notes:      input.Notes,
-		CreatedAt:  now,
-		UpdatedAt:  now,
+		UserID:          input.UserID,
+		GroupID:         input.GroupID,
+		StartsAt:        now,
+		ExpiresAt:       expiresAt,
+		Status:          SubscriptionStatusActive,
+		AssignedAt:      now,
+		Notes:           input.Notes,
+		QuotaMultiplier: quotaMultiplier,
+		CreatedAt:       now,
+		UpdatedAt:       now,
 	}
 	// 只有当 AssignedBy > 0 时才设置（0 表示系统分配，如兑换码）
 	if input.AssignedBy > 0 {
@@ -449,11 +475,12 @@ func (s *SubscriptionService) createSubscription(ctx context.Context, input *Ass
 
 // BulkAssignSubscriptionInput 批量分配订阅输入
 type BulkAssignSubscriptionInput struct {
-	UserIDs      []int64
-	GroupID      int64
-	ValidityDays int
-	AssignedBy   int64
-	Notes        string
+	UserIDs         []int64
+	GroupID         int64
+	ValidityDays    int
+	AssignedBy      int64
+	Notes           string
+	QuotaMultiplier *float64
 }
 
 // BulkAssignResult 批量分配结果
@@ -477,11 +504,12 @@ func (s *SubscriptionService) BulkAssignSubscription(ctx context.Context, input 
 
 	for _, userID := range input.UserIDs {
 		sub, reused, err := s.assignSubscriptionWithReuse(ctx, &AssignSubscriptionInput{
-			UserID:       userID,
-			GroupID:      input.GroupID,
-			ValidityDays: input.ValidityDays,
-			AssignedBy:   input.AssignedBy,
-			Notes:        input.Notes,
+			UserID:          userID,
+			GroupID:         input.GroupID,
+			ValidityDays:    input.ValidityDays,
+			AssignedBy:      input.AssignedBy,
+			Notes:           input.Notes,
+			QuotaMultiplier: input.QuotaMultiplier,
 		})
 		if err != nil {
 			result.FailedCount++
@@ -512,6 +540,9 @@ func (s *SubscriptionService) assignSubscriptionWithReuse(ctx context.Context, i
 	if !group.IsSubscriptionType() {
 		return nil, false, ErrGroupNotSubscriptionType
 	}
+	if err := validateQuotaMultiplier(input.QuotaMultiplier); err != nil {
+		return nil, false, err
+	}
 
 	// 检查是否已存在订阅；若已存在，则按幂等成功返回现有订阅
 	exists, err := s.userSubRepo.ExistsByUserIDAndGroupID(ctx, input.UserID, input.GroupID)
@@ -538,6 +569,13 @@ func (s *SubscriptionService) assignSubscriptionWithReuse(ctx context.Context, i
 			return nil, false, ErrSubscriptionAssignConflict.WithMetadata(map[string]string{
 				"conflict_reason": conflictReason,
 			})
+		}
+		// 已有未过期订阅：只有显式传入倍率才覆盖，未传保持原值。
+		if input.QuotaMultiplier != nil && *input.QuotaMultiplier != sub.QuotaMultiplier {
+			if err := s.UpdateQuotaMultiplier(ctx, sub.ID, *input.QuotaMultiplier); err != nil {
+				return nil, false, err
+			}
+			sub.QuotaMultiplier = *input.QuotaMultiplier
 		}
 		return sub, true, nil
 	}
@@ -848,6 +886,11 @@ func normalizeExpiredWindowsAt(subs []UserSubscription, now time.Time) {
 			sub.MonthlyWindowStart = nil
 			sub.MonthlyUsageUSD = 0
 		}
+		// 5h 窗口过期：清零展示数据并置空窗口起点（等待下一笔 cost>0 消费重开）
+		if sub.FiveHourWindowExpiredAt(now) {
+			sub.FiveHourWindowStart = nil
+			sub.FiveHourUsageUSD = 0
+		}
 	}
 }
 
@@ -885,7 +928,13 @@ func (s *SubscriptionService) checkAndActivateWindowAt(ctx context.Context, sub 
 
 // AdminResetQuota manually resets the daily, weekly, and/or monthly usage windows.
 func (s *SubscriptionService) AdminResetQuota(ctx context.Context, subscriptionID int64, resetDaily, resetWeekly, resetMonthly bool) (*UserSubscription, error) {
-	if !resetDaily && !resetWeekly && !resetMonthly {
+	return s.AdminResetQuotaWithFiveHour(ctx, subscriptionID, resetDaily, resetWeekly, resetMonthly, false)
+}
+
+// AdminResetQuotaWithFiveHour 在日/周/月之外支持手动重置 5h 窗口。
+// 5h 重置后 usage=0 且 window_start=NULL，下一笔 cost>0 消费才会开启新窗口。
+func (s *SubscriptionService) AdminResetQuotaWithFiveHour(ctx context.Context, subscriptionID int64, resetDaily, resetWeekly, resetMonthly, resetFiveHour bool) (*UserSubscription, error) {
+	if !resetDaily && !resetWeekly && !resetMonthly && !resetFiveHour {
 		return nil, ErrInvalidInput
 	}
 	sub, err := s.userSubRepo.GetByID(ctx, subscriptionID)
@@ -895,8 +944,15 @@ func (s *SubscriptionService) AdminResetQuota(ctx context.Context, subscriptionI
 	now := s.now()
 	// 日窗口锚点取当天 0 点：手动重置只清空用量，不改变“每天 0 点刷新”的节奏。
 	// 周/月窗口保持锚定重置时刻（期限对齐滚动窗口语义）。
-	if err := s.userSubRepo.ResetUsageWindows(ctx, sub.ID, resetDaily, resetWeekly, resetMonthly, timezone.StartOfDay(now), now); err != nil {
-		return nil, err
+	if resetDaily || resetWeekly || resetMonthly {
+		if err := s.userSubRepo.ResetUsageWindows(ctx, sub.ID, resetDaily, resetWeekly, resetMonthly, timezone.StartOfDay(now), now); err != nil {
+			return nil, err
+		}
+	}
+	if resetFiveHour {
+		if err := s.resetFiveHourUsage(ctx, sub.ID, sub.FiveHourWindowStart); err != nil {
+			return nil, err
+		}
 	}
 	// Invalidate L1 ristretto cache. Ristretto's Del() is asynchronous by design,
 	// so call Wait() immediately after to flush pending operations and guarantee
@@ -944,6 +1000,18 @@ func (s *SubscriptionService) CheckAndResetWindows(ctx context.Context, sub *Use
 		}
 		sub.MonthlyWindowStart = &windowStart
 		sub.MonthlyUsageUSD = 0
+		needsInvalidateCache = true
+	}
+
+	// 5h 窗口重置（固定 5 小时）：到期后只清零用量并置空起点，
+	// 不自动开启新窗口；下一笔 cost>0 消费会在 IncrementUsage 中重开。
+	if sub.FiveHourWindowExpiredAt(now) {
+		expectedWindowStart := sub.FiveHourWindowStart
+		if err := s.resetFiveHourUsage(ctx, sub.ID, expectedWindowStart); err != nil {
+			return err
+		}
+		sub.FiveHourWindowStart = nil
+		sub.FiveHourUsageUSD = 0
 		needsInvalidateCache = true
 	}
 
@@ -996,6 +1064,9 @@ func (s *SubscriptionService) CheckUsageLimits(ctx context.Context, sub *UserSub
 	if !sub.CheckMonthlyLimit(group, additionalCost) {
 		return ErrMonthlyLimitExceeded
 	}
+	if !sub.CheckFiveHourLimit(group, additionalCost) {
+		return ErrFiveHourLimitExceeded
+	}
 	return nil
 }
 
@@ -1029,6 +1100,10 @@ func (s *SubscriptionService) ValidateAndCheckLimits(sub *UserSubscription, grou
 		sub.MonthlyUsageUSD = 0
 		needsMaintenance = true
 	}
+	if sub.FiveHourWindowExpiredAt(now) {
+		sub.FiveHourUsageUSD = 0
+		needsMaintenance = true
+	}
 	if !sub.IsWindowActivated() {
 		needsMaintenance = true
 	}
@@ -1042,6 +1117,9 @@ func (s *SubscriptionService) ValidateAndCheckLimits(sub *UserSubscription, grou
 	}
 	if !sub.CheckMonthlyLimit(group, 0) {
 		return needsMaintenance, ErrMonthlyLimitExceeded
+	}
+	if !sub.CheckFiveHourLimit(group, 0) {
+		return needsMaintenance, ErrFiveHourLimitExceeded
 	}
 
 	return needsMaintenance, nil
@@ -1096,13 +1174,15 @@ func (s *SubscriptionService) RecordUsage(ctx context.Context, subscriptionID in
 
 // SubscriptionProgress 订阅进度
 type SubscriptionProgress struct {
-	ID            int64                `json:"id"`
-	GroupName     string               `json:"group_name"`
-	ExpiresAt     time.Time            `json:"expires_at"`
-	ExpiresInDays int                  `json:"expires_in_days"`
-	Daily         *UsageWindowProgress `json:"daily,omitempty"`
-	Weekly        *UsageWindowProgress `json:"weekly,omitempty"`
-	Monthly       *UsageWindowProgress `json:"monthly,omitempty"`
+	ID              int64                `json:"id"`
+	GroupName       string               `json:"group_name"`
+	ExpiresAt       time.Time            `json:"expires_at"`
+	ExpiresInDays   int                  `json:"expires_in_days"`
+	QuotaMultiplier float64              `json:"quota_multiplier"`
+	Daily           *UsageWindowProgress `json:"daily,omitempty"`
+	Weekly          *UsageWindowProgress `json:"weekly,omitempty"`
+	Monthly         *UsageWindowProgress `json:"monthly,omitempty"`
+	FiveHour        *UsageWindowProgress `json:"five_hour,omitempty"`
 }
 
 // UsageWindowProgress 使用窗口进度
@@ -1137,15 +1217,16 @@ func (s *SubscriptionService) GetSubscriptionProgress(ctx context.Context, subsc
 // calculateProgress 根据已加载的订阅和分组数据计算使用进度（纯内存计算，无 DB 查询）
 func (s *SubscriptionService) calculateProgress(sub *UserSubscription, group *Group) *SubscriptionProgress {
 	progress := &SubscriptionProgress{
-		ID:            sub.ID,
-		GroupName:     group.Name,
-		ExpiresAt:     sub.ExpiresAt,
-		ExpiresInDays: sub.DaysRemaining(),
+		ID:              sub.ID,
+		GroupName:       group.Name,
+		ExpiresAt:       sub.ExpiresAt,
+		ExpiresInDays:   sub.DaysRemaining(),
+		QuotaMultiplier: sub.QuotaMultiplierOrDefault(),
 	}
 
 	// 日进度
 	if group.HasDailyLimit() && sub.DailyWindowStart != nil {
-		limit := *group.DailyLimitUSD
+		limit := sub.EffectiveLimit(group.DailyLimitUSD)
 		resetsAt := sub.DailyWindowStart.Add(24 * time.Hour)
 		if dailyResetTime := sub.DailyResetTime(); dailyResetTime != nil {
 			resetsAt = *dailyResetTime
@@ -1154,7 +1235,7 @@ func (s *SubscriptionService) calculateProgress(sub *UserSubscription, group *Gr
 			LimitUSD:        limit,
 			UsedUSD:         sub.DailyUsageUSD,
 			RemainingUSD:    limit - sub.DailyUsageUSD,
-			Percentage:      (sub.DailyUsageUSD / limit) * 100,
+			Percentage:      usagePercentage(sub.DailyUsageUSD, limit),
 			WindowStart:     *sub.DailyWindowStart,
 			ResetsAt:        resetsAt,
 			ResetsInSeconds: int64(time.Until(resetsAt).Seconds()),
@@ -1172,7 +1253,7 @@ func (s *SubscriptionService) calculateProgress(sub *UserSubscription, group *Gr
 
 	// 周进度
 	if group.HasWeeklyLimit() && sub.WeeklyWindowStart != nil {
-		limit := *group.WeeklyLimitUSD
+		limit := sub.EffectiveLimit(group.WeeklyLimitUSD)
 		resetsAt := sub.WeeklyWindowStart.Add(7 * 24 * time.Hour)
 		if weeklyResetTime := sub.WeeklyResetTime(); weeklyResetTime != nil {
 			resetsAt = *weeklyResetTime
@@ -1181,7 +1262,7 @@ func (s *SubscriptionService) calculateProgress(sub *UserSubscription, group *Gr
 			LimitUSD:        limit,
 			UsedUSD:         sub.WeeklyUsageUSD,
 			RemainingUSD:    limit - sub.WeeklyUsageUSD,
-			Percentage:      (sub.WeeklyUsageUSD / limit) * 100,
+			Percentage:      usagePercentage(sub.WeeklyUsageUSD, limit),
 			WindowStart:     *sub.WeeklyWindowStart,
 			ResetsAt:        resetsAt,
 			ResetsInSeconds: int64(time.Until(resetsAt).Seconds()),
@@ -1199,7 +1280,7 @@ func (s *SubscriptionService) calculateProgress(sub *UserSubscription, group *Gr
 
 	// 月进度
 	if group.HasMonthlyLimit() && sub.MonthlyWindowStart != nil {
-		limit := *group.MonthlyLimitUSD
+		limit := sub.EffectiveLimit(group.MonthlyLimitUSD)
 		resetsAt := sub.MonthlyWindowStart.Add(30 * 24 * time.Hour)
 		if monthlyResetTime := sub.MonthlyResetTime(); monthlyResetTime != nil {
 			resetsAt = *monthlyResetTime
@@ -1208,7 +1289,7 @@ func (s *SubscriptionService) calculateProgress(sub *UserSubscription, group *Gr
 			LimitUSD:        limit,
 			UsedUSD:         sub.MonthlyUsageUSD,
 			RemainingUSD:    limit - sub.MonthlyUsageUSD,
-			Percentage:      (sub.MonthlyUsageUSD / limit) * 100,
+			Percentage:      usagePercentage(sub.MonthlyUsageUSD, limit),
 			WindowStart:     *sub.MonthlyWindowStart,
 			ResetsAt:        resetsAt,
 			ResetsInSeconds: int64(time.Until(resetsAt).Seconds()),
@@ -1224,7 +1305,45 @@ func (s *SubscriptionService) calculateProgress(sub *UserSubscription, group *Gr
 		}
 	}
 
+	// 5h 进度
+	if group.HasFiveHourLimit() && sub.FiveHourWindowStart != nil {
+		limit := sub.EffectiveLimit(group.FiveHourLimitUSD)
+		resetsAt := sub.FiveHourWindowStart.Add(subscriptionFiveHourWindow)
+		if fiveHourResetTime := sub.FiveHourResetTime(); fiveHourResetTime != nil {
+			resetsAt = *fiveHourResetTime
+		}
+		progress.FiveHour = &UsageWindowProgress{
+			LimitUSD:        limit,
+			UsedUSD:         sub.FiveHourUsageUSD,
+			RemainingUSD:    limit - sub.FiveHourUsageUSD,
+			Percentage:      usagePercentage(sub.FiveHourUsageUSD, limit),
+			WindowStart:     *sub.FiveHourWindowStart,
+			ResetsAt:        resetsAt,
+			ResetsInSeconds: int64(time.Until(resetsAt).Seconds()),
+		}
+		if progress.FiveHour.RemainingUSD < 0 {
+			progress.FiveHour.RemainingUSD = 0
+		}
+		if progress.FiveHour.Percentage > 100 {
+			progress.FiveHour.Percentage = 100
+		}
+		if progress.FiveHour.ResetsInSeconds < 0 {
+			progress.FiveHour.ResetsInSeconds = 0
+		}
+	}
+
 	return progress
+}
+
+// usagePercentage 计算用量百分比；有效限额为 0（倍率 0 或未配置）时避免除零。
+func usagePercentage(used, limit float64) float64 {
+	if limit <= 0 {
+		if used > 0 {
+			return 100
+		}
+		return 0
+	}
+	return (used / limit) * 100
 }
 
 // GetUserSubscriptionsWithProgress 获取用户所有订阅及进度

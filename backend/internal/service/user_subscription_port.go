@@ -43,3 +43,10 @@ type UserSubscriptionRepository interface {
 
 	BatchUpdateExpiredStatus(ctx context.Context) (int64, error)
 }
+
+// fiveHourUsageResetter 是 UserSubscriptionRepository 的可选扩展。
+// 使用可选接口而非直接扩张主接口，避免旧测试桩与外部实现被迫改动。
+type fiveHourUsageResetter interface {
+	// ResetFiveHourUsage 清零固定 5h 窗口并将 window_start 置空。
+	ResetFiveHourUsage(ctx context.Context, id int64, expectedWindowStart *time.Time) error
+}

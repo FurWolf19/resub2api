@@ -726,6 +726,8 @@ export default {
       allStatus: 'All Status',
       allGroups: 'All Groups',
       allPlatforms: 'All Platforms',
+      fiveHour: '5-hour',
+      five_hour: '5-hour',
       daily: 'Daily',
       weekly: 'Weekly',
       monthly: 'Monthly',
@@ -753,6 +755,7 @@ export default {
       columns: {
         user: 'User',
         group: 'Group',
+        quotaMultiplier: 'Quota Multiplier',
         usage: 'Usage',
         expires: 'Expires',
         status: 'Status',
@@ -779,8 +782,9 @@ export default {
       revoke: 'Revoke',
       restore: 'Restore',
       resetQuota: 'Reset Quota',
+      resettingQuota: 'Resetting...',
       resetQuotaTitle: 'Reset Usage Quota',
-      resetQuotaConfirm: "Reset the daily, weekly, and monthly usage quota for '{user}'? Usage will be zeroed and windows restarted from today.",
+      resetQuotaConfirm: "Select the usage windows to reset for '{user}'. Selected windows will be zeroed and restarted.",
       quotaResetSuccess: 'Quota reset successfully',
       failedToResetQuota: 'Failed to reset quota',
       noSubscriptionsYet: 'No subscriptions yet',
@@ -799,6 +803,18 @@ export default {
       pleaseSelectUser: 'Please select a user',
       pleaseSelectGroup: 'Please select a group',
       validityDaysRequired: 'Please enter a valid number of days (at least 1)',
+      assignQuotaMultiplier: 'Assign quota by multiplier',
+      assignQuotaMultiplierHint:
+        'When enabled, quota is assigned at the selected ratio. 0.5 = 50%; bulk assignment applies one value to all selected users.',
+      quotaMultiplier: 'Quota multiplier',
+      quotaMultiplierPlaceholder: '0 ~ 1',
+      quotaMultiplierHint:
+        'Effective limit = group limit × quota multiplier. Range 0 ~ 1; 0.5 = 50%.',
+      quotaMultiplierRange: 'Quota multiplier must be a number between 0 and 1',
+      quotaMultiplierSaved: 'Quota multiplier saved',
+      failedToSaveQuotaMultiplier: 'Failed to save quota multiplier',
+      editQuotaMultiplier: 'Edit quota multiplier',
+      editQuotaMultiplierTitle: 'Edit Quota Multiplier',
       revokeConfirm:
         "Are you sure you want to revoke the subscription for '{user}'? You can restore it later from the revoked list.",
       restoreConfirm:
