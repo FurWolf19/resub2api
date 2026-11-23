@@ -679,7 +679,7 @@ export default {
     detail: {
       noModels: '该分组暂未配置模型',
       noPricing: '未配置定价',
-      peakNote: '高峰时段 {window} 计费倍率 ×{multiplier}',
+      peakNote: '高峰时段 {window}',
       longContextDisabledNote: '该分组未启用长上下文阶梯计费，超阈值请求仍按基础档计费，官方阶梯仅供参考'
     },
     table: {
@@ -700,7 +700,7 @@ export default {
       timePricingRowHint: '按 {timezone} 时间，在该时段内发起的请求按本行价格计费',
       timePricingRowHintWeekdays:
         '按 {timezone} 时间，仅工作日（周一至周五）在该时段内发起的请求按本行价格计费，周末全天按标准价',
-      timePricingRowHintPeak: '；本行价格未含高峰倍率，与高峰时段 {window} 重叠的部分实付再乘 ×{multiplier}',
+      timePricingRowHintPeak: '；本行价格未含高峰倍率，与高峰时段 {window} 重叠的部分实付还会再乘对应高峰倍率',
       timePricingWeekdays: '工作日',
       timePricingRateHint: '生效倍率 {rate} × 时段倍率 {multiplier}',
       paidPrice: '实付价格(折后)',

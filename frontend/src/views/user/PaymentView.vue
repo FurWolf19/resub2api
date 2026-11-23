@@ -150,7 +150,7 @@
                   </div>
                   <div v-if="planHasPeakRate(selectedPlan)">
                     <span class="text-xs text-gray-400 dark:text-gray-500">{{ t('payment.planCard.peakRate') }}</span>
-                    <div class="text-sm font-semibold text-amber-700 dark:text-amber-300">
+                    <div class="break-words text-sm font-semibold text-amber-700 dark:text-amber-300">
                       {{ planPeakRateLabel(selectedPlan) }}
                     </div>
                   </div>
@@ -231,7 +231,7 @@
                       </div>
                       <div class="flex flex-wrap gap-x-3 text-[11px] text-gray-400 dark:text-gray-500">
                         <span>{{ t('payment.planCard.rate') }}: ×{{ sub.group?.rate_multiplier ?? 1 }}</span>
-                        <span v-if="subscriptionHasPeakRate(sub)">{{ t('payment.planCard.peakRate') }}: {{ subscriptionPeakRateLabel(sub) }}</span>
+                        <span v-if="subscriptionHasPeakRate(sub)" :title="subscriptionPeakRateTitle(sub)">{{ t('payment.planCard.peakRate') }}: {{ subscriptionPeakRateLabel(sub) }}</span>
                         <span v-if="sub.group?.daily_limit_usd == null && sub.group?.weekly_limit_usd == null && sub.group?.monthly_limit_usd == null && sub.group?.five_hour_limit_usd == null">{{ t('payment.planCard.quota') }}: {{ t('payment.planCard.unlimited') }}</span>
                         <span v-if="sub.expires_at">{{ t('userSubscriptions.daysRemaining', { days: getDaysRemaining(sub.expires_at) }) }}</span>
                         <span v-else>{{ t('userSubscriptions.noExpiration') }}</span>
@@ -297,7 +297,7 @@ import { FeatureFlags, resolveFeatureFlag } from '@/utils/featureFlags'
 import { paymentAPI } from '@/api/payment'
 import { extractApiErrorMessage, extractI18nErrorMessage } from '@/utils/apiError'
 import { isMobileDevice } from '@/utils/device'
-import { hasPeakRate, formatPeakRateWindow, serverTimezoneLabel, type PeakRateFields } from '@/utils/peak-rate'
+import { hasPeakRate, formatPeakRateWindow, formatPeakRateWindowPreview, serverTimezoneLabel, type PeakRateFields } from '@/utils/peak-rate'
 import type { SubscriptionPlan, CheckoutInfoResponse, CreateOrderResult, OrderType } from '@/types/payment'
 import { formatBalanceRechargeMultiplier, formatRechargeBonusNumber, normalizeRechargeBonusMode, normalizeRechargeBonusTiers, quoteRechargeBonus } from '@/utils/rechargeBonus'
 import AppLayout from '@/components/layout/AppLayout.vue'
@@ -347,7 +347,20 @@ function subscriptionHasPeakRate(sub: { group?: PeakRateFields | null }): boolea
 }
 
 function subscriptionPeakRateLabel(sub: { group?: PeakRateFields | null }): string {
-  return formatPeakRateWindow(sub.group, serverTimezoneLabel(appStore.cachedPublicSettings?.server_utc_offset))
+  return formatPeakRateWindowPreview(
+    sub.group,
+    serverTimezoneLabel(appStore.cachedPublicSettings?.server_utc_offset),
+    t,
+    2
+  )
+}
+
+function subscriptionPeakRateTitle(sub: { group?: PeakRateFields | null }): string {
+  return formatPeakRateWindow(
+    sub.group,
+    serverTimezoneLabel(appStore.cachedPublicSettings?.server_utc_offset),
+    t
+  )
 }
 
 const loading = ref(true)
@@ -806,7 +819,11 @@ function planHasPeakRate(plan: SubscriptionPlan): boolean {
 }
 
 function planPeakRateLabel(plan: SubscriptionPlan): string {
-  return formatPeakRateWindow(plan, serverTimezoneLabel(appStore.cachedPublicSettings?.server_utc_offset))
+  return formatPeakRateWindow(
+    plan,
+    serverTimezoneLabel(appStore.cachedPublicSettings?.server_utc_offset),
+    t
+  )
 }
 
 function selectPlan(plan: SubscriptionPlan) {

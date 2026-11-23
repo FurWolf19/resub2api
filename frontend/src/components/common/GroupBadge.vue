@@ -31,7 +31,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { SubscriptionType, GroupPlatform } from '@/types'
 import { useAppStore } from '@/stores/app'
-import { formatPeakRateWindow, serverTimezoneLabel } from '@/utils/peak-rate'
+import { formatPeakRateWindow, formatPeakRateWindowPreview, hasPeakRate as groupHasPeakRate, serverTimezoneLabel, type PeakRateWindow } from '@/utils/peak-rate'
 import PlatformIcon from './PlatformIcon.vue'
 
 interface Props {
@@ -44,6 +44,7 @@ interface Props {
   peakStart?: string
   peakEnd?: string
   peakRateMultiplier?: number
+  peakRateWindows?: PeakRateWindow[]
   showRate?: boolean
   /** Allow full group names to wrap in layouts that have room for multiple lines. */
   truncate?: boolean
@@ -82,24 +83,33 @@ const hasCustomRate = computed(() => {
 
 const appStore = useAppStore()
 
+const peakFields = computed(() => ({
+  peak_rate_enabled: props.peakRateEnabled,
+  peak_start: props.peakStart,
+  peak_end: props.peakEnd,
+  peak_rate_multiplier: props.peakRateMultiplier,
+  peak_rate_windows: props.peakRateWindows
+}))
+
 const hasPeakRate = computed(() => {
-  return Boolean(props.showRate && props.peakRateEnabled && props.peakStart && props.peakEnd)
+  return Boolean(props.showRate && groupHasPeakRate(peakFields.value))
 })
 
 const peakRateText = computed(() => {
-  return formatPeakRateWindow(
-    {
-      peak_rate_enabled: props.peakRateEnabled,
-      peak_start: props.peakStart,
-      peak_end: props.peakEnd,
-      peak_rate_multiplier: props.peakRateMultiplier
-    },
-    serverTimezoneLabel(appStore.cachedPublicSettings?.server_utc_offset)
+  return formatPeakRateWindowPreview(
+    peakFields.value,
+    serverTimezoneLabel(appStore.cachedPublicSettings?.server_utc_offset),
+    t
   )
 })
 
 const peakRateTitle = computed(() => {
-  return t('common.peakRateTooltip', { window: peakRateText.value })
+  const full = formatPeakRateWindow(
+    peakFields.value,
+    serverTimezoneLabel(appStore.cachedPublicSettings?.server_utc_offset),
+    t
+  )
+  return t('common.peakRateTooltip', { window: full })
 })
 
 // 是否显示右侧标签
@@ -184,7 +194,7 @@ const labelClass = computed(() => {
 })
 
 const peakRateClass = computed(() => {
-  return 'px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
+  return 'max-w-[14rem] truncate whitespace-nowrap px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
 })
 
 // Badge color based on platform and subscription type

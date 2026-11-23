@@ -67,6 +67,22 @@ func cloneGroupModelRouting(value map[string][]int64) map[string][]int64 {
 	return cloned
 }
 
+func cloneGroupPeakRateWindows(windows []PeakRateWindow) []PeakRateWindow {
+	if windows == nil {
+		return nil
+	}
+	cloned := make([]PeakRateWindow, len(windows))
+	for i, w := range windows {
+		cloned[i] = PeakRateWindow{
+			Start:      w.Start,
+			End:        w.End,
+			Multiplier: w.Multiplier,
+			Days:       append([]int(nil), w.Days...),
+		}
+	}
+	return cloned
+}
+
 func cloneGroupVideoModelPrices(value map[string]map[string]float64) map[string]map[string]float64 {
 	if value == nil {
 		return nil
@@ -104,6 +120,7 @@ func cloneGroupForDuplicate(source *Group, operationID string) *Group {
 		PeakStart:                       source.PeakStart,
 		PeakEnd:                         source.PeakEnd,
 		PeakRateMultiplier:              source.PeakRateMultiplier,
+		PeakRateWindows:                 cloneGroupPeakRateWindows(source.PeakRateWindows),
 		ProfitControlEnabled:            source.ProfitControlEnabled,
 		ProfitMinMargin:                 source.ProfitMinMargin,
 		ProfitSafetyBuffer:              source.ProfitSafetyBuffer,

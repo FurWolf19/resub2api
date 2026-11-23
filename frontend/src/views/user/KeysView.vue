@@ -173,6 +173,7 @@
                   :peak-start="row.group.peak_start"
                   :peak-end="row.group.peak_end"
                   :peak-rate-multiplier="row.group.peak_rate_multiplier"
+                  :peak-rate-windows="row.group.peak_rate_windows"
                 />
                 <span v-else class="text-sm text-gray-400 dark:text-dark-500">{{
                   t('keys.noGroup')
@@ -568,6 +569,7 @@
                 :peak-start="(option as unknown as GroupOption).peakStart"
                 :peak-end="(option as unknown as GroupOption).peakEnd"
                 :peak-rate-multiplier="(option as unknown as GroupOption).peakRateMultiplier"
+                :peak-rate-windows="(option as unknown as GroupOption).peakRateWindows"
               />
               <span v-else class="text-gray-400">{{ t('keys.selectGroup') }}</span>
             </template>
@@ -582,6 +584,7 @@
                 :peak-start="(option as unknown as GroupOption).peakStart"
                 :peak-end="(option as unknown as GroupOption).peakEnd"
                 :peak-rate-multiplier="(option as unknown as GroupOption).peakRateMultiplier"
+                :peak-rate-windows="(option as unknown as GroupOption).peakRateWindows"
                 :description="(option as unknown as GroupOption).description"
                 :selected="selected"
               />
@@ -1190,6 +1193,7 @@
               :peak-start="option.peakStart"
               :peak-end="option.peakEnd"
               :peak-rate-multiplier="option.peakRateMultiplier"
+              :peak-rate-windows="option.peakRateWindows"
               :description="option.description"
               :selected="
                 selectedKeyForGroup?.group_id === option.value ||
@@ -1232,7 +1236,7 @@ import BulkEditKeysModal from '@/components/keys/BulkEditKeysModal.vue'
 	import EndpointPopover from '@/components/keys/EndpointPopover.vue'
 	import GroupBadge from '@/components/common/GroupBadge.vue'
 	import GroupOptionItem from '@/components/common/GroupOptionItem.vue'
-	import type { ApiKey, Group, PublicSettings, SubscriptionType, GroupPlatform, UpdateApiKeyRequest } from '@/types'
+	import type { ApiKey, Group, PublicSettings, SubscriptionType, GroupPlatform, UpdateApiKeyRequest, PeakRateWindow } from '@/types'
 import type { Column } from '@/components/common/types'
 import type { BatchApiKeyUsageStats } from '@/api/usage'
 import { formatDateTime } from '@/utils/format'
@@ -1263,6 +1267,7 @@ interface GroupOption {
   peakStart: string
   peakEnd: string
   peakRateMultiplier: number
+  peakRateWindows?: PeakRateWindow[]
   subscriptionType: SubscriptionType
   platform: GroupPlatform
 }
@@ -1532,6 +1537,7 @@ const groupOptions = computed(() =>
     peakStart: group.peak_start,
     peakEnd: group.peak_end,
     peakRateMultiplier: group.peak_rate_multiplier,
+    peakRateWindows: group.peak_rate_windows,
     subscriptionType: group.subscription_type,
     platform: group.platform
   }))

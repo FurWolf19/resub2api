@@ -265,6 +265,10 @@ type CreateGroupInput struct {
 	PeakStart          string
 	PeakEnd            string
 	PeakRateMultiplier *float64
+	// 多时段高峰配置；PeakRateWindowsSet 用于区分"未传"与"传空数组"。
+	// 传入时以数组为准，并把第一个窗口同步回旧字段做降级兼容。
+	PeakRateWindows    []PeakRateWindow
+	PeakRateWindowsSet bool
 	ImagePrice1K       *float64
 	ImagePrice2K       *float64
 	ImagePrice4K       *float64
@@ -350,6 +354,9 @@ type UpdateGroupInput struct {
 	PeakStart          *string
 	PeakEnd            *string
 	PeakRateMultiplier *float64
+	// 多时段高峰配置；PeakRateWindowsSet 为 true 时以数组为准（空数组表示清空并关闭窗口）。
+	PeakRateWindows    []PeakRateWindow
+	PeakRateWindowsSet bool
 	ImagePrice1K       *float64
 	ImagePrice2K       *float64
 	ImagePrice4K       *float64

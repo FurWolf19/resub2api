@@ -75,18 +75,19 @@ func validatePlanPatch(req UpdatePlanRequest) error {
 
 // PlanGroupInfo holds the group details needed for subscription plan display.
 type PlanGroupInfo struct {
-	Platform           string   `json:"platform"`
-	Name               string   `json:"name"`
-	RateMultiplier     float64  `json:"rate_multiplier"`
-	PeakRateEnabled    bool     `json:"peak_rate_enabled"`
-	PeakStart          string   `json:"peak_start"`
-	PeakEnd            string   `json:"peak_end"`
-	PeakRateMultiplier float64  `json:"peak_rate_multiplier"`
-	DailyLimitUSD      *float64 `json:"daily_limit_usd"`
-	WeeklyLimitUSD     *float64 `json:"weekly_limit_usd"`
-	MonthlyLimitUSD    *float64 `json:"monthly_limit_usd"`
-	FiveHourLimitUSD   *float64 `json:"five_hour_limit_usd"`
-	ModelScopes        []string `json:"supported_model_scopes"`
+	Platform           string           `json:"platform"`
+	Name               string           `json:"name"`
+	RateMultiplier     float64          `json:"rate_multiplier"`
+	PeakRateEnabled    bool             `json:"peak_rate_enabled"`
+	PeakStart          string           `json:"peak_start"`
+	PeakEnd            string           `json:"peak_end"`
+	PeakRateMultiplier float64          `json:"peak_rate_multiplier"`
+	PeakRateWindows    []PeakRateWindow `json:"peak_rate_windows,omitempty"`
+	DailyLimitUSD      *float64         `json:"daily_limit_usd"`
+	WeeklyLimitUSD     *float64         `json:"weekly_limit_usd"`
+	MonthlyLimitUSD    *float64         `json:"monthly_limit_usd"`
+	FiveHourLimitUSD   *float64         `json:"five_hour_limit_usd"`
+	ModelScopes        []string         `json:"supported_model_scopes"`
 
 	// 不对外输出；handler 按请求语言用它换出 Name 的译文。
 	I18n GroupI18n `json:"-"`
@@ -119,6 +120,7 @@ func (s *PaymentConfigService) GetGroupInfoMap(ctx context.Context, plans []*dbe
 			PeakStart:          g.PeakStart,
 			PeakEnd:            g.PeakEnd,
 			PeakRateMultiplier: g.PeakRateMultiplier,
+			PeakRateWindows:    g.PeakRateWindows,
 			DailyLimitUSD:      g.DailyLimitUsd,
 			WeeklyLimitUSD:     g.WeeklyLimitUsd,
 			MonthlyLimitUSD:    g.MonthlyLimitUsd,

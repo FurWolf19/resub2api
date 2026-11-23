@@ -51,7 +51,7 @@
         </div>
         <div v-if="hasPeakRate" class="col-span-2 flex items-center justify-between gap-2">
           <span class="text-gray-400 dark:text-dark-500">{{ t('payment.planCard.peakRate') }}</span>
-          <span class="text-right font-medium text-amber-700 dark:text-amber-300">{{ peakRateDisplay }}</span>
+          <span class="text-right font-medium text-amber-700 dark:text-amber-300" :title="peakRateTitle">{{ peakRateDisplay }}</span>
         </div>
         <div v-if="plan.five_hour_limit_usd != null" class="flex items-center justify-between">
           <span class="text-gray-400 dark:text-dark-500">{{ t('payment.planCard.fiveHourLimit') }}</span>
@@ -114,7 +114,7 @@ import { useI18n } from 'vue-i18n'
 import type { SubscriptionPlan } from '@/types/payment'
 import type { UserSubscription } from '@/types'
 import { useAppStore } from '@/stores/app'
-import { hasPeakRate as groupHasPeakRate, formatPeakRateWindow, serverTimezoneLabel } from '@/utils/peak-rate'
+import { hasPeakRate as groupHasPeakRate, formatPeakRateWindow, formatPeakRateWindowPreview, serverTimezoneLabel } from '@/utils/peak-rate'
 import { planValiditySuffix } from './validity'
 import { currencySymbol } from '@/components/payment/currency'
 import {
@@ -164,7 +164,20 @@ const planCurrencySymbol = computed(() => currencySymbol(props.plan.currency || 
 const hasPeakRate = computed(() => groupHasPeakRate(props.plan))
 
 const peakRateDisplay = computed(() => {
-  return formatPeakRateWindow(props.plan, serverTimezoneLabel(appStore.cachedPublicSettings?.server_utc_offset))
+  return formatPeakRateWindowPreview(
+    props.plan,
+    serverTimezoneLabel(appStore.cachedPublicSettings?.server_utc_offset),
+    t,
+    2
+  )
+})
+
+const peakRateTitle = computed(() => {
+  return formatPeakRateWindow(
+    props.plan,
+    serverTimezoneLabel(appStore.cachedPublicSettings?.server_utc_offset),
+    t
+  )
 })
 
 const MODEL_SCOPE_LABELS: Record<string, string> = {

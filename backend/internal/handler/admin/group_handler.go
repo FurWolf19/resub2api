@@ -212,6 +212,7 @@ type CreateGroupRequest struct {
 	PeakStart                       string                        `json:"peak_start"`
 	PeakEnd                         string                        `json:"peak_end"`
 	PeakRateMultiplier              *float64                      `json:"peak_rate_multiplier"`
+	PeakRateWindows                 *[]service.PeakRateWindow     `json:"peak_rate_windows"`
 	ProfitControlEnabled            bool                          `json:"profit_control_enabled"`
 	ProfitMinMargin                 *float64                      `json:"profit_min_margin"`
 	ProfitSafetyBuffer              *float64                      `json:"profit_safety_buffer"`
@@ -291,6 +292,7 @@ type UpdateGroupRequest struct {
 	PeakStart                       *string                       `json:"peak_start"`
 	PeakEnd                         *string                       `json:"peak_end"`
 	PeakRateMultiplier              *float64                      `json:"peak_rate_multiplier"`
+	PeakRateWindows                 *[]service.PeakRateWindow     `json:"peak_rate_windows"`
 	ProfitControlEnabled            *bool                         `json:"profit_control_enabled"`
 	ProfitMinMargin                 *float64                      `json:"profit_min_margin"`
 	ProfitSafetyBuffer              *float64                      `json:"profit_safety_buffer"`
@@ -660,7 +662,23 @@ func (h *GroupHandler) Create(c *gin.Context) {
 		sanitizeCreateGroupRequestForSimpleMode(&req)
 	}
 
-	if err := service.ValidatePeakRateConfig(req.SubscriptionType, req.PeakRateEnabled, req.PeakStart, req.PeakEnd, float64ValueOrDefault(req.PeakRateMultiplier, 1.0)); err != nil {
+	if req.PeakRateWindows != nil {
+		if req.PeakRateEnabled && req.SubscriptionType != service.SubscriptionTypeSubscription {
+			response.BadRequest(c, "高峰时段倍率仅支持订阅类型分组")
+			return
+		}
+		windows := service.NormalizePeakRateWindows(req.SubscriptionType, req.PeakRateEnabled, *req.PeakRateWindows)
+		if req.PeakRateEnabled {
+			if len(windows) == 0 {
+				response.BadRequest(c, "peak_rate_enabled 为 true 时必须至少配置一个高峰时段")
+				return
+			}
+			if err := service.ValidatePeakRateWindows(windows); err != nil {
+				response.BadRequest(c, err.Error())
+				return
+			}
+		}
+	} else if err := service.ValidatePeakRateConfig(req.SubscriptionType, req.PeakRateEnabled, req.PeakStart, req.PeakEnd, float64ValueOrDefault(req.PeakRateMultiplier, 1.0)); err != nil {
 		response.BadRequest(c, err.Error())
 		return
 	}
@@ -699,6 +717,8 @@ func (h *GroupHandler) Create(c *gin.Context) {
 		PeakStart:                       req.PeakStart,
 		PeakEnd:                         req.PeakEnd,
 		PeakRateMultiplier:              req.PeakRateMultiplier,
+		PeakRateWindows:                 peakRateWindowsValue(req.PeakRateWindows),
+		PeakRateWindowsSet:              req.PeakRateWindows != nil,
 		ProfitControlEnabled:            req.ProfitControlEnabled,
 		ProfitMinMargin:                 req.ProfitMinMargin,
 		ProfitSafetyBuffer:              req.ProfitSafetyBuffer,
@@ -849,6 +869,8 @@ func (h *GroupHandler) Update(c *gin.Context) {
 		PeakStart:                       req.PeakStart,
 		PeakEnd:                         req.PeakEnd,
 		PeakRateMultiplier:              req.PeakRateMultiplier,
+		PeakRateWindows:                 peakRateWindowsValue(req.PeakRateWindows),
+		PeakRateWindowsSet:              req.PeakRateWindows != nil,
 		ProfitControlEnabled:            req.ProfitControlEnabled,
 		ProfitMinMargin:                 req.ProfitMinMargin,
 		ProfitSafetyBuffer:              req.ProfitSafetyBuffer,
@@ -1129,6 +1151,14 @@ func (h *GroupHandler) ClearGroupRPMOverrides(c *gin.Context) {
 	}
 
 	response.Success(c, gin.H{"message": "RPM overrides cleared successfully"})
+}
+
+// peakRateWindowsValue 解引用可选的高峰时段数组；nil 表示调用方未提供该字段。
+func peakRateWindowsValue(value *[]service.PeakRateWindow) []service.PeakRateWindow {
+	if value == nil {
+		return nil
+	}
+	return *value
 }
 
 // UpdateSortOrderRequest represents the request to update group sort orders

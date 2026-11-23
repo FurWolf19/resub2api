@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 type OpenAIMessagesDispatchModelConfig = domain.OpenAIMessagesDispatchModelConfig
 type GroupCodexModelsManifestConfig = domain.GroupCodexModelsManifestConfig
 type ReasoningEffortMapping = domain.ReasoningEffortMapping
+type PeakRateWindow = domain.PeakRateWindow
 
 type Group struct {
 	ID             int64
@@ -22,12 +24,15 @@ type Group struct {
 	I18n           GroupI18n // 名称与描述的界面语言译文；缺失的语言沿用 Name/Description
 	Platform       string
 	RateMultiplier float64
-	// 高峰时段倍率：peak_rate_enabled 为 true 且当前时刻处于 [PeakStart, PeakEnd) 时，
-	// token 计费倍率额外乘以 PeakRateMultiplier。详见 PeakMultiplierAt。
+	// 高峰时段倍率：peak_rate_enabled 为 true 且当前时刻命中某个高峰时段时，
+	// token 计费倍率额外乘以该时段的 Multiplier。详见 PeakMultiplierAt。
+	// PeakRateWindows 非空时优先生效；为空时回退旧单时段字段 PeakStart/PeakEnd/PeakRateMultiplier。
+	// 旧字段在保存时始终同步第一个窗口，仅供旧客户端与降级读取。
 	PeakRateEnabled    bool
 	PeakStart          string
 	PeakEnd            string
 	PeakRateMultiplier float64
+	PeakRateWindows    []PeakRateWindow
 	IsExclusive        bool
 	Status             string
 	Hydrated           bool // indicates the group was loaded from a trusted repository source
@@ -314,27 +319,191 @@ func parseMinutes(hhmm string) (int, bool) {
 	return h*60 + m, true
 }
 
+// effectivePeakRateWindows 返回实际生效的高峰时段列表。
+// 新数组非空时以数组为准；数组为空时回退旧单时段字段（等价于一个 days=all 的窗口）。
+// 旧字段非法或数组为空且旧字段未配置时返回 nil，调用方按"无高峰"处理。
+func (g *Group) effectivePeakRateWindows() []PeakRateWindow {
+	if g == nil {
+		return nil
+	}
+	if len(g.PeakRateWindows) > 0 {
+		return g.PeakRateWindows
+	}
+	return peakRateWindowsFromLegacyConfig(g.PeakStart, g.PeakEnd, g.PeakRateMultiplier)
+}
+
+// peakRateWindowsFromLegacyConfig 把旧单时段字段归一化为一个 days=all 的窗口。
+// 字段缺失或非法（格式错误、start>=end、负倍率）时返回 nil。
+func peakRateWindowsFromLegacyConfig(start, end string, multiplier float64) []PeakRateWindow {
+	start = strings.TrimSpace(start)
+	end = strings.TrimSpace(end)
+	st, okStart := parseMinutes(start)
+	en, okEnd := parseMinutes(end)
+	if !okStart || !okEnd || st >= en || multiplier < 0 {
+		return nil
+	}
+	return []PeakRateWindow{{Start: start, End: end, Multiplier: multiplier}}
+}
+
 // PeakMultiplierAt 返回指定时刻 now 的高峰因子。
-//   - 未启用 / 未配置 / 配置非法（start>=end 或格式错误） / 非高峰时段 → 返回 1.0（安全降级）
-//   - 区间为左闭右开 [PeakStart, PeakEnd)，仅支持当日区间，不支持跨天（如 22:00-次日02:00）
+//   - 未启用 / 非订阅分组 / 未配置 / 配置非法 / 非高峰时段 → 返回 1.0（安全降级）
+//   - 每个窗口区间为左闭右开 [Start, End)，仅支持当日区间，不支持跨天（如 22:00-次日02:00）
+//   - Days 为 0=周日 … 6=周六；空数组表示每天
 //   - 时刻基于全局系统时区（timezone.Location）判定
 //
+// 校验保证窗口互不重叠，因此命中第一个窗口即返回，不做叠乘。
 // 该方法是纯函数，不读取任何外部状态，便于单测。
 func (g *Group) PeakMultiplierAt(now time.Time) float64 {
-	if g == nil || !g.IsSubscriptionType() || !g.PeakRateEnabled || g.PeakStart == "" || g.PeakEnd == "" {
+	if g == nil || !g.IsSubscriptionType() || !g.PeakRateEnabled {
 		return 1.0
 	}
-	start, ok1 := parseMinutes(g.PeakStart)
-	end, ok2 := parseMinutes(g.PeakEnd)
-	if !ok1 || !ok2 || start >= end {
+	windows := g.effectivePeakRateWindows()
+	if len(windows) == 0 {
 		return 1.0
 	}
 	t := now.In(timezone.Location())
 	cur := t.Hour()*60 + t.Minute()
-	if cur >= start && cur < end {
-		return g.PeakRateMultiplier
+	weekday := int(t.Weekday())
+	for _, w := range windows {
+		if !peakRateWindowDayMatches(w.Days, weekday) {
+			continue
+		}
+		start, okStart := parseMinutes(w.Start)
+		end, okEnd := parseMinutes(w.End)
+		if !okStart || !okEnd || start >= end || w.Multiplier < 0 {
+			continue
+		}
+		if cur >= start && cur < end {
+			return w.Multiplier
+		}
 	}
 	return 1.0
+}
+
+// peakRateWindowDayMatches 判断某个窗口是否在给定星期生效；空 Days 表示每天。
+func peakRateWindowDayMatches(days []int, weekday int) bool {
+	if len(days) == 0 {
+		return true
+	}
+	for _, d := range days {
+		if d == weekday {
+			return true
+		}
+	}
+	return false
+}
+
+// normalizePeakRateDays 去重并升序排序，保持空数组语义（每天）。
+func normalizePeakRateDays(days []int) []int {
+	if len(days) == 0 {
+		return nil
+	}
+	seen := make(map[int]struct{}, len(days))
+	out := make([]int, 0, len(days))
+	for _, d := range days {
+		if _, ok := seen[d]; ok {
+			continue
+		}
+		seen[d] = struct{}{}
+		out = append(out, d)
+	}
+	sort.Ints(out)
+	return out
+}
+
+var peakRateWeekdayNames = [...]string{"周日", "周一", "周二", "周三", "周四", "周五", "周六"}
+
+// ValidatePeakRateWindows 校验多时段高峰配置。
+//   - start/end 必须是合法 HH:MM，且 start < end（不支持跨天）；
+//   - multiplier 必须为非负有限数；
+//   - days 仅允许 0..6；
+//   - 同一星期几上的区间不得重叠（相邻边界允许），不同星期几允许同时段不同倍率。
+//
+// 错误信息包含冲突窗口序号与星期，便于前端直接展示。
+func ValidatePeakRateWindows(windows []PeakRateWindow) error {
+	type expandedSpan struct {
+		start   int
+		end     int
+		window  int
+		weekday int
+	}
+	spans := make([]expandedSpan, 0, len(windows)*7)
+	for i, w := range windows {
+		start, ok := parseMinutes(strings.TrimSpace(w.Start))
+		if !ok {
+			return fmt.Errorf("第 %d 个高峰时段的开始时间 %q 格式应为 HH:MM", i+1, w.Start)
+		}
+		end, ok := parseMinutes(strings.TrimSpace(w.End))
+		if !ok {
+			return fmt.Errorf("第 %d 个高峰时段的结束时间 %q 格式应为 HH:MM", i+1, w.End)
+		}
+		if start >= end {
+			return fmt.Errorf("第 %d 个高峰时段 %s-%s 的结束时间必须晚于开始时间（不支持跨天区间，如 22:00-次日02:00）", i+1, w.Start, w.End)
+		}
+		if math.IsNaN(w.Multiplier) || math.IsInf(w.Multiplier, 0) || w.Multiplier < 0 {
+			return fmt.Errorf("第 %d 个高峰时段的倍率必须为非负数，got %v", i+1, w.Multiplier)
+		}
+		days := normalizePeakRateDays(w.Days)
+		if len(days) == 0 {
+			days = []int{0, 1, 2, 3, 4, 5, 6}
+		}
+		for _, d := range days {
+			if d < 0 || d > 6 {
+				return fmt.Errorf("第 %d 个高峰时段的星期取值必须为 0..6（0=周日），got %d", i+1, d)
+			}
+			spans = append(spans, expandedSpan{
+				start:   d*1440 + start,
+				end:     d*1440 + end,
+				window:  i,
+				weekday: d,
+			})
+		}
+	}
+
+	sort.SliceStable(spans, func(i, j int) bool {
+		if spans[i].start != spans[j].start {
+			return spans[i].start < spans[j].start
+		}
+		return spans[i].end < spans[j].end
+	})
+	maxEndIdx := -1
+	for i := range spans {
+		if maxEndIdx >= 0 && spans[i].start < spans[maxEndIdx].end {
+			prev := spans[maxEndIdx]
+			cur := spans[i]
+			return fmt.Errorf(
+				"高峰时段重叠：第 %d 个时段（%s %s-%s）与第 %d 个时段（%s %s-%s）在%s重叠",
+				prev.window+1, peakRateWeekdayNames[prev.weekday], windows[prev.window].Start, windows[prev.window].End,
+				cur.window+1, peakRateWeekdayNames[cur.weekday], windows[cur.window].Start, windows[cur.window].End,
+				peakRateWeekdayNames[cur.weekday],
+			)
+		}
+		if maxEndIdx < 0 || spans[i].end > spans[maxEndIdx].end {
+			maxEndIdx = i
+		}
+	}
+	return nil
+}
+
+// NormalizePeakRateWindows 归一化最终落库的多时段高峰配置：
+//   - 非订阅分组或未启用 → 清空（返回 nil）；
+//   - 去重并升序 days、trim start/end；保持窗口原始顺序（不按时间重排，避免改变前端顺序）。
+//
+// 调用顺序为先归一化、后校验；enabled=true 时校验保证各字段合法。
+func NormalizePeakRateWindows(subscriptionType string, enabled bool, windows []PeakRateWindow) []PeakRateWindow {
+	if subscriptionType != SubscriptionTypeSubscription || !enabled {
+		return nil
+	}
+	out := make([]PeakRateWindow, 0, len(windows))
+	for _, w := range windows {
+		out = append(out, PeakRateWindow{
+			Start:      strings.TrimSpace(w.Start),
+			End:        strings.TrimSpace(w.End),
+			Multiplier: w.Multiplier,
+			Days:       normalizePeakRateDays(w.Days),
+		})
+	}
+	return out
 }
 
 // ValidatePeakRateConfig 是高峰倍率配置的唯一校验来源，供 handler 与 service 层共用。

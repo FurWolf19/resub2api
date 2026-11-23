@@ -491,10 +491,34 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 	if input.PeakRateMultiplier != nil {
 		peakRateMultiplier = *input.PeakRateMultiplier
 	}
-	// 先归一化（非订阅分组清空高峰配置、清洗停用状态下的脏字段）再校验，与 UpdateGroup 同一收口。
-	peakRateEnabled, peakStart, peakEnd, peakRateMultiplier := NormalizePeakRateConfig(subscriptionType, input.PeakRateEnabled, input.PeakStart, input.PeakEnd, peakRateMultiplier)
-	if err := ValidatePeakRateConfig(subscriptionType, peakRateEnabled, peakStart, peakEnd, peakRateMultiplier); err != nil {
-		return nil, infraerrors.BadRequest("INVALID_PEAK_RATE_CONFIG", err.Error())
+	var peakRateWindows []PeakRateWindow
+	var peakRateEnabled bool
+	var peakStart, peakEnd string
+	if input.PeakRateWindowsSet {
+		// 新 API：以 windows 为准，旧字段忽略；保存时把第一个窗口同步回旧字段。
+		peakRateEnabled = input.PeakRateEnabled && subscriptionType == SubscriptionTypeSubscription
+		peakRateWindows = NormalizePeakRateWindows(subscriptionType, peakRateEnabled, input.PeakRateWindows)
+		if peakRateEnabled {
+			if len(peakRateWindows) == 0 {
+				return nil, infraerrors.BadRequest("INVALID_PEAK_RATE_CONFIG", "peak_rate_enabled 为 true 时必须至少配置一个高峰时段")
+			}
+			if err := ValidatePeakRateWindows(peakRateWindows); err != nil {
+				return nil, infraerrors.BadRequest("INVALID_PEAK_RATE_CONFIG", err.Error())
+			}
+			first := peakRateWindows[0]
+			peakStart, peakEnd, peakRateMultiplier = first.Start, first.End, first.Multiplier
+		} else {
+			peakStart, peakEnd, peakRateMultiplier = "", "", 1.0
+		}
+	} else {
+		// 旧 API：保持旧行为，并把它归一化为一个 days=all 的窗口写入新字段。
+		peakRateEnabled, peakStart, peakEnd, peakRateMultiplier = NormalizePeakRateConfig(subscriptionType, input.PeakRateEnabled, input.PeakStart, input.PeakEnd, peakRateMultiplier)
+		if err := ValidatePeakRateConfig(subscriptionType, peakRateEnabled, peakStart, peakEnd, peakRateMultiplier); err != nil {
+			return nil, infraerrors.BadRequest("INVALID_PEAK_RATE_CONFIG", err.Error())
+		}
+		if peakRateEnabled {
+			peakRateWindows = peakRateWindowsFromLegacyConfig(peakStart, peakEnd, peakRateMultiplier)
+		}
 	}
 
 	profitMinMargin := 0.0
@@ -605,6 +629,7 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		PeakStart:                       peakStart,
 		PeakEnd:                         peakEnd,
 		PeakRateMultiplier:              peakRateMultiplier,
+		PeakRateWindows:                 peakRateWindows,
 		ProfitControlEnabled:            profitControlEnabled,
 		ProfitMinMargin:                 profitMinMargin,
 		ProfitSafetyBuffer:              profitSafetyBuffer,
@@ -909,12 +934,42 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	if input.PeakRateMultiplier != nil {
 		group.PeakRateMultiplier = *input.PeakRateMultiplier
 	}
-	// 先归一化（非订阅分组——含本次更新转为非订阅——静默清空高峰配置，清洗停用状态下的脏字段），
-	// 再收敛校验：Update 可能只传部分 peak 字段，需对合并后的最终配置统一校验，
-	// 防止单独修改 start/end 导致最终 start>=end 等非法配置入库。与 CreateGroup 同一收口。
-	group.PeakRateEnabled, group.PeakStart, group.PeakEnd, group.PeakRateMultiplier = NormalizePeakRateConfig(group.SubscriptionType, group.PeakRateEnabled, group.PeakStart, group.PeakEnd, group.PeakRateMultiplier)
-	if err := ValidatePeakRateConfig(group.SubscriptionType, group.PeakRateEnabled, group.PeakStart, group.PeakEnd, group.PeakRateMultiplier); err != nil {
-		return nil, infraerrors.BadRequest("INVALID_PEAK_RATE_CONFIG", err.Error())
+	if input.PeakRateWindowsSet {
+		// 新 API：以 windows 为准，旧字段输入忽略；第一个窗口同步回旧字段。
+		group.PeakRateEnabled = group.PeakRateEnabled && group.SubscriptionType == SubscriptionTypeSubscription
+		group.PeakRateWindows = NormalizePeakRateWindows(group.SubscriptionType, group.PeakRateEnabled, input.PeakRateWindows)
+		if group.PeakRateEnabled {
+			if len(group.PeakRateWindows) == 0 {
+				return nil, infraerrors.BadRequest("INVALID_PEAK_RATE_CONFIG", "peak_rate_enabled 为 true 时必须至少配置一个高峰时段")
+			}
+			if err := ValidatePeakRateWindows(group.PeakRateWindows); err != nil {
+				return nil, infraerrors.BadRequest("INVALID_PEAK_RATE_CONFIG", err.Error())
+			}
+			first := group.PeakRateWindows[0]
+			group.PeakStart, group.PeakEnd, group.PeakRateMultiplier = first.Start, first.End, first.Multiplier
+		} else {
+			group.PeakStart, group.PeakEnd, group.PeakRateMultiplier = "", "", 1.0
+		}
+	} else {
+		// 先归一化（非订阅分组——含本次更新转为非订阅——静默清空高峰配置，清洗停用状态下的脏字段），
+		// 再收敛校验：Update 可能只传部分 peak 字段，需对合并后的最终配置统一校验，
+		// 防止单独修改 start/end 导致最终 start>=end 等非法配置入库。与 CreateGroup 同一收口。
+		group.PeakRateEnabled, group.PeakStart, group.PeakEnd, group.PeakRateMultiplier = NormalizePeakRateConfig(group.SubscriptionType, group.PeakRateEnabled, group.PeakStart, group.PeakEnd, group.PeakRateMultiplier)
+		if err := ValidatePeakRateConfig(group.SubscriptionType, group.PeakRateEnabled, group.PeakStart, group.PeakEnd, group.PeakRateMultiplier); err != nil {
+			return nil, infraerrors.BadRequest("INVALID_PEAK_RATE_CONFIG", err.Error())
+		}
+		// 未传 windows 时：
+		//   - 本次显式修改了旧时段字段 → 用合并后的旧字段重建单窗口，保持新旧一致；
+		//   - 否则保留已有多窗口配置（例如旧前端只改描述，不应清空新配置）；
+		//   - 转为非订阅分组 → 清空。
+		switch {
+		case group.SubscriptionType != SubscriptionTypeSubscription:
+			group.PeakRateWindows = nil
+		case input.PeakStart != nil || input.PeakEnd != nil || input.PeakRateMultiplier != nil:
+			group.PeakRateWindows = peakRateWindowsFromLegacyConfig(group.PeakStart, group.PeakEnd, group.PeakRateMultiplier)
+		case group.PeakRateEnabled && len(group.PeakRateWindows) == 0:
+			group.PeakRateWindows = peakRateWindowsFromLegacyConfig(group.PeakStart, group.PeakEnd, group.PeakRateMultiplier)
+		}
 	}
 	if input.ProfitControlEnabled != nil {
 		group.ProfitControlEnabled = *input.ProfitControlEnabled

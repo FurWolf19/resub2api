@@ -16,6 +16,7 @@
           :peak-start="group.peak_start"
           :peak-end="group.peak_end"
           :peak-rate-multiplier="group.peak_rate_multiplier"
+          :peak-rate-windows="group.peak_rate_windows"
           always-show-rate
         />
         <span
@@ -97,15 +98,15 @@ const peakWindow = computed(() => {
   if (!hasPeakRate(props.group)) return ''
   return formatPeakRateWindow(
     props.group,
-    serverTimezoneLabel(appStore.cachedPublicSettings?.server_utc_offset)
+    serverTimezoneLabel(appStore.cachedPublicSettings?.server_utc_offset),
+    t
   )
 })
 
 const peakNote = computed(() => {
   if (!peakWindow.value) return ''
   return t('modelPlaza.detail.peakNote', {
-    window: peakWindow.value,
-    multiplier: props.group.peak_rate_multiplier
+    window: peakWindow.value
   })
 })
 

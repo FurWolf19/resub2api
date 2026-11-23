@@ -37,7 +37,7 @@
         </span>
         <span
           v-if="hasPeakRate"
-          class="inline-flex items-center whitespace-nowrap rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700 dark:bg-amber-900/20 dark:text-amber-300"
+          class="inline-flex max-w-[12rem] items-center truncate whitespace-nowrap rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700 dark:bg-amber-900/20 dark:text-amber-300"
           :title="peakRateTitle"
         >
           {{ peakRateText }}
@@ -64,7 +64,7 @@ import { useI18n } from 'vue-i18n'
 import GroupBadge from './GroupBadge.vue'
 import type { SubscriptionType, GroupPlatform } from '@/types'
 import { useAppStore } from '@/stores/app'
-import { formatPeakRateWindow, serverTimezoneLabel } from '@/utils/peak-rate'
+import { formatPeakRateWindow, formatPeakRateWindowPreview, hasPeakRate as groupHasPeakRate, serverTimezoneLabel, type PeakRateWindow } from '@/utils/peak-rate'
 
 const { t } = useI18n()
 
@@ -78,6 +78,7 @@ interface Props {
   peakStart?: string
   peakEnd?: string
   peakRateMultiplier?: number
+  peakRateWindows?: PeakRateWindow[]
   description?: string | null
   selected?: boolean
   showCheckmark?: boolean
@@ -103,24 +104,31 @@ const hasCustomRate = computed(() => {
 
 const appStore = useAppStore()
 
-const hasPeakRate = computed(() => {
-  return Boolean(props.peakRateEnabled && props.peakStart && props.peakEnd)
-})
+const peakFields = computed(() => ({
+  peak_rate_enabled: props.peakRateEnabled,
+  peak_start: props.peakStart,
+  peak_end: props.peakEnd,
+  peak_rate_multiplier: props.peakRateMultiplier,
+  peak_rate_windows: props.peakRateWindows
+}))
+
+const hasPeakRate = computed(() => groupHasPeakRate(peakFields.value))
 
 const peakRateText = computed(() => {
-  return formatPeakRateWindow(
-    {
-      peak_rate_enabled: props.peakRateEnabled,
-      peak_start: props.peakStart,
-      peak_end: props.peakEnd,
-      peak_rate_multiplier: props.peakRateMultiplier
-    },
-    serverTimezoneLabel(appStore.cachedPublicSettings?.server_utc_offset)
+  return formatPeakRateWindowPreview(
+    peakFields.value,
+    serverTimezoneLabel(appStore.cachedPublicSettings?.server_utc_offset),
+    t
   )
 })
 
 const peakRateTitle = computed(() => {
-  return t('common.peakRateTooltip', { window: peakRateText.value })
+  const full = formatPeakRateWindow(
+    peakFields.value,
+    serverTimezoneLabel(appStore.cachedPublicSettings?.server_utc_offset),
+    t
+  )
+  return t('common.peakRateTooltip', { window: full })
 })
 
 // Rate pill color matches platform badge color

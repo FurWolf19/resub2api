@@ -674,7 +674,7 @@ export default {
     detail: {
       noModels: 'No models configured for this group',
       noPricing: 'Pricing not configured',
-      peakNote: 'Peak hours {window}: billing rate ×{multiplier}',
+      peakNote: 'Peak hours {window}',
       longContextDisabledNote: 'Long-context tier pricing is disabled for this group: requests above the threshold are billed at the base tier; official tiers are for reference only'
     },
     table: {
@@ -696,7 +696,7 @@ export default {
       timePricingRowHintWeekdays:
         'On weekdays (Mon–Fri) only, requests made within this period ({timezone} time) are billed at the prices in this row; weekends use the standard prices',
       timePricingRowHintPeak:
-        '; prices in this row exclude the peak-hour rate — where this period overlaps the peak hours {window}, the overlapping portion is additionally multiplied by ×{multiplier}',
+        '; prices in this row exclude the peak-hour rate — where this period overlaps the peak hours {window}, the overlapping portion is additionally multiplied by the matching peak rate',
       timePricingWeekdays: 'Weekdays',
       timePricingRateHint: 'Effective rate {rate} × period multiplier {multiplier}',
       paidPrice: 'Your Price (Discounted)',

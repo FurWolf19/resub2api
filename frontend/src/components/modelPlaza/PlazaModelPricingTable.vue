@@ -514,8 +514,7 @@ function timePricingRowHint(m: PlazaModel): string {
   let hint = t(key, { timezone: m.time_pricing?.timezone })
   if (props.peakWindow) {
     hint += t('modelPlaza.table.timePricingRowHintPeak', {
-      window: props.peakWindow,
-      multiplier: props.peakRateMultiplier ?? 1
+      window: props.peakWindow
     })
   }
   return hint

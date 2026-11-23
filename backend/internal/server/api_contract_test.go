@@ -358,6 +358,7 @@ func TestAPIContracts(t *testing.T) {
 						"peak_start": "",
 						"peak_end": "",
 						"peak_rate_multiplier": 1,
+						"peak_rate_windows": null,
 						"is_exclusive": false,
 						"status": "active",
 						"subscription_type": "standard",

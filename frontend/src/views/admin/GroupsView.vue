@@ -1223,43 +1223,18 @@
                 v-model="createForm.peak_rate_enabled"
                 type="checkbox"
                 class="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                @change="ensureCreatePeakRateWindow"
               />
               <span>{{ t("admin.groups.peakRate.enable") }}</span>
             </label>
           </div>
-          <div
+          <PeakRateWindowsEditor
             v-if="createForm.peak_rate_enabled"
-            class="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3"
-          >
-            <div>
-              <label class="input-label">{{ t("admin.groups.peakRate.peakStart") }}</label>
-              <input
-                v-model="createForm.peak_start"
-                type="time"
-                class="input"
-              />
-            </div>
-            <div>
-              <label class="input-label">{{ t("admin.groups.peakRate.peakEnd") }}</label>
-              <input
-                v-model="createForm.peak_end"
-                type="time"
-                class="input"
-              />
-            </div>
-            <div>
-              <label class="input-label">{{ t("admin.groups.peakRate.peakMultiplier") }}</label>
-              <input
-                v-model.number="createForm.peak_rate_multiplier"
-                type="number"
-                step="0.001"
-                min="0"
-                class="input"
-                placeholder="1"
-                :title="t('admin.groups.peakRate.multiplierHint')"
-              />
-            </div>
-          </div>
+            ref="createPeakRateEditorRef"
+            v-model="createForm.peak_rate_windows"
+            :timezone-label="peakRateTimezoneLabel"
+            class="mb-4"
+          />
         </div>
 
         <!-- 分组利润控制（五个平台 token 请求） -->
@@ -2903,43 +2878,18 @@
                 v-model="editForm.peak_rate_enabled"
                 type="checkbox"
                 class="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                @change="ensureEditPeakRateWindow"
               />
               <span>{{ t("admin.groups.peakRate.enable") }}</span>
             </label>
           </div>
-          <div
+          <PeakRateWindowsEditor
             v-if="editForm.peak_rate_enabled"
-            class="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3"
-          >
-            <div>
-              <label class="input-label">{{ t("admin.groups.peakRate.peakStart") }}</label>
-              <input
-                v-model="editForm.peak_start"
-                type="time"
-                class="input"
-              />
-            </div>
-            <div>
-              <label class="input-label">{{ t("admin.groups.peakRate.peakEnd") }}</label>
-              <input
-                v-model="editForm.peak_end"
-                type="time"
-                class="input"
-              />
-            </div>
-            <div>
-              <label class="input-label">{{ t("admin.groups.peakRate.peakMultiplier") }}</label>
-              <input
-                v-model.number="editForm.peak_rate_multiplier"
-                type="number"
-                step="0.001"
-                min="0"
-                class="input"
-                placeholder="1"
-                :title="t('admin.groups.peakRate.multiplierHint')"
-              />
-            </div>
-          </div>
+            ref="editPeakRateEditorRef"
+            v-model="editForm.peak_rate_windows"
+            :timezone-label="peakRateTimezoneLabel"
+            class="mb-4"
+          />
         </div>
 
         <!-- 分组利润控制（五个平台 token 请求） -->
@@ -4402,6 +4352,14 @@ import GroupRPMOverridesModal from "@/components/admin/group/GroupRPMOverridesMo
 import GroupCapacityBadge from "@/components/common/GroupCapacityBadge.vue";
 import ReasoningEffortPolicyFields from "@/components/admin/group/ReasoningEffortPolicyFields.vue";
 import CodexManifestAccountsField from "@/components/admin/group/CodexManifestAccountsField.vue";
+import PeakRateWindowsEditor from "@/components/admin/group/PeakRateWindowsEditor.vue";
+import {
+  createPeakRateWindowFormEntry,
+  peakRateFormEntriesToPayload,
+  peakRateWindowsToFormEntries,
+  type PeakRateWindowFormEntry,
+} from "@/components/admin/group/peakRateForm";
+import { serverTimezoneLabel } from "@/utils/peak-rate";
 import PricingEntryCard from "@/components/admin/channel/PricingEntryCard.vue";
 import type { PricingFormEntry } from "@/components/admin/channel/types";
 import {
@@ -4991,6 +4949,25 @@ type ReasoningEffortPolicyFieldsExpose = {
 const createReasoningEffortPolicyRef = ref<ReasoningEffortPolicyFieldsExpose | null>(null);
 const editReasoningEffortPolicyRef = ref<ReasoningEffortPolicyFieldsExpose | null>(null);
 
+type PeakRateWindowsEditorExpose = { validate: () => string | null };
+const createPeakRateEditorRef = ref<PeakRateWindowsEditorExpose | null>(null);
+const editPeakRateEditorRef = ref<PeakRateWindowsEditorExpose | null>(null);
+const peakRateTimezoneLabel = computed(() =>
+  serverTimezoneLabel(appStore.cachedPublicSettings?.server_utc_offset),
+);
+
+const ensureCreatePeakRateWindow = () => {
+  if (createForm.peak_rate_enabled && createForm.peak_rate_windows.length === 0) {
+    createForm.peak_rate_windows.push(createPeakRateWindowFormEntry());
+  }
+};
+
+const ensureEditPeakRateWindow = () => {
+  if (editForm.peak_rate_enabled && editForm.peak_rate_windows.length === 0) {
+    editForm.peak_rate_windows.push(createPeakRateWindowFormEntry());
+  }
+};
+
 // 固定账号获取 Codex Model Manifest（仅 openai 分组编辑对话框）
 type CodexManifestAccountsFieldExpose = {
   validate: () => boolean;
@@ -5086,6 +5063,7 @@ const createForm = reactive({
   peak_start: "",
   peak_end: "",
   peak_rate_multiplier: 1.0,
+  peak_rate_windows: [] as PeakRateWindowFormEntry[],
   // 分组利润控制（五个 token 平台）；界面按百分比输入，提交时转小数
   profit_control_enabled: false,
   profit_min_margin_percent: 0,
@@ -5455,6 +5433,7 @@ const editForm = reactive({
   peak_start: "",
   peak_end: "",
   peak_rate_multiplier: 1.0,
+  peak_rate_windows: [] as PeakRateWindowFormEntry[],
   // 分组利润控制（五个 token 平台）；界面按百分比输入，提交时转小数
   profit_control_enabled: false,
   profit_min_margin_percent: 0,
@@ -5929,6 +5908,7 @@ const closeCreateModal = () => {
   createForm.peak_start = "";
   createForm.peak_end = "";
   createForm.peak_rate_multiplier = 1.0;
+  createForm.peak_rate_windows = [];
   createForm.profit_control_enabled = false;
   createForm.profit_min_margin_percent = 0;
   createForm.profit_safety_buffer_percent = 0;
@@ -6028,10 +6008,21 @@ const handleCreateGroup = async () => {
     appStore.showError(t("admin.groups.modelAllowlist.emptySelectionError"));
     return;
   }
+  if (
+    createForm.subscription_type === "subscription" &&
+    createForm.peak_rate_enabled
+  ) {
+    const error = createPeakRateEditorRef.value?.validate();
+    if (error) {
+      appStore.showError(error);
+      return;
+    }
+  }
   submitting.value = true;
   try {
     const {
       video_model_prices: _createFormVideoModelPrices,
+      peak_rate_windows: _createFormPeakRateWindows,
       ...createGroupForm
     } = createForm;
     const videoModelPrices = serializeVideoModelPrices(
@@ -6150,10 +6141,15 @@ const handleCreateGroup = async () => {
       requestData.web_search_price_per_call,
     );
     requestData.peak_rate_enabled = createForm.peak_rate_enabled;
-    requestData.peak_start = createForm.peak_start;
-    requestData.peak_end = createForm.peak_end;
+    const peakRateWindows = peakRateFormEntriesToPayload(
+      createForm.peak_rate_windows,
+    );
+    (requestData as Record<string, unknown>).peak_rate_windows = peakRateWindows;
+    // 旧字段继续同步第一个窗口（后端以数组为准；旧客户端/降级读取仍可用）。
+    requestData.peak_start = peakRateWindows[0]?.start ?? createForm.peak_start;
+    requestData.peak_end = peakRateWindows[0]?.end ?? createForm.peak_end;
     requestData.peak_rate_multiplier = normalizeRateMultiplier(
-      createForm.peak_rate_multiplier,
+      peakRateWindows[0]?.multiplier ?? createForm.peak_rate_multiplier,
     );
     const payload = authStore.isSimpleMode
       ? {
@@ -6236,6 +6232,8 @@ const handleEdit = async (group: AdminGroup) => {
   editForm.peak_start = group.peak_start ?? "";
   editForm.peak_end = group.peak_end ?? "";
   editForm.peak_rate_multiplier = group.peak_rate_multiplier ?? 1.0;
+  // 新数组优先；数组为空时用旧单时段字段回填为一个每天生效的窗口，避免旧分组丢配置。
+  editForm.peak_rate_windows = peakRateWindowsToFormEntries(group);
   editForm.profit_control_enabled = group.profit_control_enabled ?? false;
   editForm.profit_min_margin_percent = decimalToPercent(
     group.profit_min_margin ?? 0,
@@ -6329,6 +6327,7 @@ const closeEditModal = () => {
   editForm.peak_start = "";
   editForm.peak_end = "";
   editForm.peak_rate_multiplier = 1.0;
+  editForm.peak_rate_windows = [];
   editForm.profit_control_enabled = false;
   editForm.profit_min_margin_percent = 0;
   editForm.profit_safety_buffer_percent = 0;
@@ -6391,12 +6390,27 @@ const handleUpdateGroup = async () => {
     editCodexManifestRef.value?.validate();
     return;
   }
+  if (
+    editForm.subscription_type === "subscription" &&
+    editForm.peak_rate_enabled
+  ) {
+    const error = editPeakRateEditorRef.value?.validate();
+    if (error) {
+      appStore.showError(error);
+      return;
+    }
+  }
 
   submitting.value = true;
   try {
+    // 多时段窗口的 UI 字段（id/折叠状态/日期模式）不直接提交，由下方转换成后端契约。
+    const {
+      peak_rate_windows: _editPeakRateWindows,
+      ...editGroupForm
+    } = editForm;
     // 转换 fallback_group_id: null -> 0 (后端使用 0 表示清除)
     const payload = {
-      ...editForm,
+      ...editGroupForm,
       force_openai_fast: normalizeGroupOpenAIFast(
         editForm.platform,
         editForm.force_openai_fast,
@@ -6520,10 +6534,15 @@ const handleUpdateGroup = async () => {
       payload.web_search_price_per_call,
     );
     payload.peak_rate_enabled = editForm.peak_rate_enabled;
-    payload.peak_start = editForm.peak_start;
-    payload.peak_end = editForm.peak_end;
+    const peakRateWindows = peakRateFormEntriesToPayload(
+      editForm.peak_rate_windows,
+    );
+    (payload as Record<string, unknown>).peak_rate_windows = peakRateWindows;
+    // 旧字段继续同步第一个窗口（后端以数组为准；旧客户端/降级读取仍可用）。
+    payload.peak_start = peakRateWindows[0]?.start ?? editForm.peak_start;
+    payload.peak_end = peakRateWindows[0]?.end ?? editForm.peak_end;
     payload.peak_rate_multiplier = normalizeRateMultiplier(
-      editForm.peak_rate_multiplier,
+      peakRateWindows[0]?.multiplier ?? editForm.peak_rate_multiplier,
     );
     const requestData = authStore.isSimpleMode
       ? {
@@ -6815,6 +6834,7 @@ watch(
       createForm.peak_start = "";
       createForm.peak_end = "";
       createForm.peak_rate_multiplier = 1.0;
+      createForm.peak_rate_windows = [];
     }
   },
 );
@@ -6828,6 +6848,7 @@ watch(
       editForm.peak_start = "";
       editForm.peak_end = "";
       editForm.peak_rate_multiplier = 1.0;
+      editForm.peak_rate_windows = [];
     }
   },
 );

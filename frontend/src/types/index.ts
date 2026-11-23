@@ -2,6 +2,10 @@
  * Core Type Definitions for Sub2API Frontend
  */
 
+import type { PeakRateWindow } from '@/utils/peak-rate'
+
+export type { PeakRateWindow }
+
 // ==================== Common Types ====================
 
 export interface SelectOption {
@@ -624,6 +628,8 @@ export interface Group {
   peak_start: string
   peak_end: string
   peak_rate_multiplier: number
+  /** 多时段高峰配置；为空时回退旧单时段字段。 */
+  peak_rate_windows?: PeakRateWindow[]
   // Claude Code 客户端限制
   claude_code_only: boolean
   fallback_group_id: number | null
@@ -849,6 +855,7 @@ export interface CreateGroupRequest {
   peak_start?: string
   peak_end?: string
   peak_rate_multiplier?: number
+  peak_rate_windows?: PeakRateWindow[]
   // 分组利润控制（五个 token 平台；margin/buffer 为小数）
   profit_control_enabled?: boolean
   profit_min_margin?: number
@@ -919,6 +926,7 @@ export interface UpdateGroupRequest {
   peak_start?: string
   peak_end?: string
   peak_rate_multiplier?: number
+  peak_rate_windows?: PeakRateWindow[]
   // 分组利润控制（五个 token 平台；margin/buffer 为小数）
   profit_control_enabled?: boolean
   profit_min_margin?: number

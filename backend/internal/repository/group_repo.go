@@ -76,6 +76,14 @@ func newGroupRepositoryWithSQL(client *dbent.Client, sqlq sqlExecutor) *groupRep
 	return &groupRepository{client: client, sql: sqlq}
 }
 
+// nonNilPeakRateWindows 保证 JSONB 列写入 [] 而不是 null，与迁移默认值保持一致。
+func nonNilPeakRateWindows(windows []service.PeakRateWindow) []service.PeakRateWindow {
+	if windows == nil {
+		return []service.PeakRateWindow{}
+	}
+	return windows
+}
+
 func (r *groupRepository) Create(ctx context.Context, groupIn *service.Group) error {
 	if err := createGroupRecord(ctx, r.client, groupIn); err != nil {
 		return err
@@ -155,6 +163,7 @@ func createGroupRecord(ctx context.Context, client *dbent.Client, groupIn *servi
 		SetPeakStart(groupIn.PeakStart).
 		SetPeakEnd(groupIn.PeakEnd).
 		SetPeakRateMultiplier(groupIn.PeakRateMultiplier).
+		SetPeakRateWindows(nonNilPeakRateWindows(groupIn.PeakRateWindows)).
 		SetProfitControlEnabled(groupIn.ProfitControlEnabled).
 		SetProfitMinMargin(groupIn.ProfitMinMargin).
 		SetProfitSafetyBuffer(groupIn.ProfitSafetyBuffer)
@@ -342,6 +351,7 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 		SetPeakStart(groupIn.PeakStart).
 		SetPeakEnd(groupIn.PeakEnd).
 		SetPeakRateMultiplier(groupIn.PeakRateMultiplier).
+		SetPeakRateWindows(nonNilPeakRateWindows(groupIn.PeakRateWindows)).
 		SetProfitControlEnabled(groupIn.ProfitControlEnabled).
 		SetProfitMinMargin(groupIn.ProfitMinMargin).
 		SetProfitSafetyBuffer(groupIn.ProfitSafetyBuffer)
