@@ -238,7 +238,7 @@ func probeOpenAIProtocolCapabilities(
 		switch {
 		case probeResult.TransportFailed:
 			markOpenAIProtocolProbeFailure(accountID, time.Now())
-		case probeResult.Responded && !(probeResult.Responses.Conclusive && probeResult.Chat.Conclusive):
+		case probeResult.Responded && (!probeResult.Responses.Conclusive || !probeResult.Chat.Conclusive):
 			// 401/模型不可用等“有响应但无结论”同样需要负缓存，否则首次阻塞
 			// 探测会在每个请求上重复执行。只有一个协议有结论、另一个无结论时
 			// NeedsRefresh 会恒真，后台会每隔约一分钟重探；这里同样退避，避免

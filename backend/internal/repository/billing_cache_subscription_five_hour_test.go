@@ -16,7 +16,9 @@ func newBillingCacheForTest(t *testing.T) *billingCache {
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
-	return NewBillingCache(client).(*billingCache)
+	cache, ok := NewBillingCache(client).(*billingCache)
+	require.True(t, ok, "NewBillingCache 应返回 *billingCache")
+	return cache
 }
 
 func TestUpdateSubscriptionUsageFiveHourWindow(t *testing.T) {
