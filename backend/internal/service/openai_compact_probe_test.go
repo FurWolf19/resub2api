@@ -196,3 +196,39 @@ func TestOpenAICompactProbeFoundCompactionItem_TerminalResponseOutput(t *testing
 		t.Fatalf("终态 output 为空且无 item 事件时不应判定为支持")
 	}
 }
+
+func TestShouldReportOpenAICompactCapabilityUnsupported(t *testing.T) {
+	unsupportedBody := []byte(`{"error":{"message":"compact is not supported by this upstream"}}`)
+
+	tests := []struct {
+		name            string
+		status          int
+		body            []byte
+		compaction      bool
+		official        bool
+		known           bool
+		wantUnsupported bool
+	}{
+		{name: "official 400 unsupported stays failure", status: http.StatusBadRequest, body: unsupportedBody, official: true, known: true, wantUnsupported: false},
+		{name: "official 2xx without item stays failure", status: http.StatusOK, official: true, known: true, wantUnsupported: false},
+		{name: "custom 400 explicit unsupported", status: http.StatusBadRequest, body: unsupportedBody, official: false, known: true, wantUnsupported: true},
+		{name: "custom 403 explicit unsupported", status: http.StatusForbidden, body: unsupportedBody, official: false, known: true, wantUnsupported: true},
+		{name: "custom 422 explicit unsupported", status: http.StatusUnprocessableEntity, body: unsupportedBody, official: false, known: true, wantUnsupported: true},
+		{name: "custom 403 generic forbidden stays failure", status: http.StatusForbidden, body: []byte(`{"error":{"message":"forbidden"}}`), official: false, known: true, wantUnsupported: false},
+		{name: "custom 404 stays failure", status: http.StatusNotFound, body: []byte(`404 page not found`), official: false, known: true, wantUnsupported: false},
+		{name: "custom 401 stays failure", status: http.StatusUnauthorized, body: []byte(`unauthorized`), official: false, known: true, wantUnsupported: false},
+		{name: "custom 500 stays failure", status: http.StatusInternalServerError, body: []byte(`internal error`), official: false, known: true, wantUnsupported: false},
+		{name: "custom 2xx without item", status: http.StatusOK, compaction: false, official: false, known: true, wantUnsupported: true},
+		{name: "custom 2xx with item", status: http.StatusOK, compaction: true, official: false, known: true, wantUnsupported: false},
+		{name: "unknown target follows probe classification", status: http.StatusBadRequest, body: unsupportedBody, official: false, known: false, wantUnsupported: true},
+		{name: "unknown target 404 follows probe classification", status: http.StatusNotFound, body: []byte(`404 page not found`), official: false, known: false, wantUnsupported: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := shouldReportOpenAICompactCapabilityUnsupported(tt.status, tt.body, tt.compaction, tt.official, tt.known)
+			if got != tt.wantUnsupported {
+				t.Fatalf("shouldReportOpenAICompactCapabilityUnsupported() = %v, want %v", got, tt.wantUnsupported)
+			}
+		})
+	}
+}

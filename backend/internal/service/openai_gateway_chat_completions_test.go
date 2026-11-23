@@ -288,7 +288,12 @@ func TestForwardAsChatCompletions_StructuredInputRetryRequiresCompleteErrorBody(
 			account := structuredInputRetryTestAccount()
 			status := http.StatusBadRequest
 			if test.unknown {
-				delete(account.Extra, openai_compat.ExtraKeyResponsesSupported)
+				account.Extra = map[string]any{
+					openai_compat.ExtraKeyProtocolCapabilities: map[string]any{
+						openai_compat.ProtocolResponses:       map[string]any{"supported": true},
+						openai_compat.ProtocolChatCompletions: map[string]any{"supported": false},
+					},
+				}
 				status = http.StatusNotFound
 			}
 			upstream := &httpUpstreamRecorder{responses: []*http.Response{
@@ -335,7 +340,12 @@ func TestForwardAsChatCompletions_RawFallbackPreservesResponsesTiming(t *testing
 				account := structuredInputRetryTestAccount()
 				status := http.StatusBadRequest
 				if unknown {
-					delete(account.Extra, openai_compat.ExtraKeyResponsesSupported)
+					account.Extra = map[string]any{
+						openai_compat.ExtraKeyProtocolCapabilities: map[string]any{
+							openai_compat.ProtocolResponses:       map[string]any{"supported": true},
+							openai_compat.ProtocolChatCompletions: map[string]any{"supported": false},
+						},
+					}
 					status = http.StatusNotFound
 				}
 				initialBody := &openAIChatFallbackDelayReader{Reader: strings.NewReader(`{"error":{"code":"invalid_type","param":"input","message":"Expected a string, but got an array instead."}}`)}
@@ -411,7 +421,15 @@ func TestForwardAsChatCompletions_StructuredInputRejectionDoesNotRetryIneligible
 			account := structuredInputRetryTestAccount()
 			account.Extra = map[string]any{openai_compat.ExtraKeyResponsesSupported: true, openai_compat.ExtraKeyResponsesMode: test.mode}
 			if test.unknown {
-				delete(account.Extra, openai_compat.ExtraKeyResponsesSupported)
+				// auto 模式不再把未知默认成 Responses；用“Responses 已知支持、
+				// Chat 已知不支持”表达同一测试场景（首次仍走 Responses）。
+				account.Extra = map[string]any{
+					openai_compat.ExtraKeyResponsesMode: test.mode,
+					openai_compat.ExtraKeyProtocolCapabilities: map[string]any{
+						openai_compat.ProtocolResponses:       map[string]any{"supported": true},
+						openai_compat.ProtocolChatCompletions: map[string]any{"supported": false},
+					},
+				}
 			}
 			if test.platform != "" {
 				account.Platform = test.platform

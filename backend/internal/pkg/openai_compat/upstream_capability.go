@@ -17,6 +17,13 @@
 //     pensieve/short-term/maxims/preserve-existing-runtime-behavior-when-replacing-logic-in-stateful-systems）
 package openai_compat
 
+import (
+	"encoding/json"
+	"strconv"
+	"strings"
+	"time"
+)
+
 // AccountResponsesSupport 描述账号上游对 OpenAI Responses API 的有效支持状态。
 //
 // 仅用于 platform=openai + type=apikey 的账号；其他账号类型不应调用本包判定。
@@ -112,4 +119,253 @@ func ResolveResponsesSupport(extra map[string]any) AccountResponsesSupport {
 // （详见 internal/service/openai_gateway_chat_completions_raw.go）。
 func ShouldUseResponsesAPI(extra map[string]any) bool {
 	return ResolveResponsesSupport(extra) != ResponsesSupportNo
+}
+
+// ---------------------------------------------------------------------------
+// Dual-protocol capability (auto mode)
+// ---------------------------------------------------------------------------
+
+// Protocol identifiers used by OpenAI protocol capability probing.
+const (
+	ProtocolResponses       = "responses"
+	ProtocolChatCompletions = "chat_completions"
+)
+
+// ExtraKeyProtocolCapabilities 是 accounts.extra 中双协议能力探测结果的键名。
+const ExtraKeyProtocolCapabilities = "openai_protocol_capabilities"
+
+// ProtocolCapabilityTTL 是探测结果的有效期。过期后先用旧值转发，再后台异步重探。
+const ProtocolCapabilityTTL = 30 * time.Minute
+
+// ProtocolCapability 描述单个上游协议的探测结论。
+type ProtocolCapability struct {
+	Known     bool
+	Supported bool
+	ProbedAt  time.Time
+}
+
+// Fresh 报告该能力结论是否仍在 TTL 内。旧键迁移来的结论没有 probed_at，
+// 视为已过期（会触发一次后台重探，但不影响本次转发）。
+func (c ProtocolCapability) Fresh(now time.Time) bool {
+	if !c.Known || c.ProbedAt.IsZero() {
+		return false
+	}
+	age := now.Sub(c.ProbedAt)
+	return age >= 0 && age < ProtocolCapabilityTTL
+}
+
+// ProtocolCapabilities 描述 OpenAI APIKey auto 模式下的双协议能力。
+type ProtocolCapabilities struct {
+	Responses       ProtocolCapability
+	ChatCompletions ProtocolCapability
+}
+
+// HasKnown 报告是否至少有一个协议已有结论。
+func (c ProtocolCapabilities) HasKnown() bool {
+	return c.Responses.Known || c.ChatCompletions.Known
+}
+
+// NeedsRefresh 报告是否应重新探测：任一协议未知或结论已过期。
+func (c ProtocolCapabilities) NeedsRefresh(now time.Time) bool {
+	return !c.Responses.Fresh(now) || !c.ChatCompletions.Fresh(now)
+}
+
+// Lookup 返回指定协议的能力结论。
+func (c ProtocolCapabilities) Lookup(protocol string) (known, supported bool) {
+	switch normalizeProtocolName(protocol) {
+	case ProtocolResponses:
+		return c.Responses.Known, c.Responses.Supported
+	case ProtocolChatCompletions:
+		return c.ChatCompletions.Known, c.ChatCompletions.Supported
+	default:
+		return false, false
+	}
+}
+
+// Supports 报告已知且支持指定协议。
+func (c ProtocolCapabilities) Supports(protocol string) bool {
+	known, supported := c.Lookup(protocol)
+	return known && supported
+}
+
+// ChooseProtocol 在 auto 模式下选择本次请求实际使用的上游协议。
+//
+//  1. 入站协议已知支持 → 跟随入站（少一次转换）。
+//  2. 另一种协议已知支持 → 用另一种。
+//  3. 入站协议明确不支持 → 用另一种（即使另一种尚未探测，真实请求会给出答案）。
+//  4. 入站协议未知 → 跟随入站，由真实请求与 404/405 回退决定。
+//  5. 两种都明确不支持 → 跟随入站，让真实请求产生明确错误。
+func (c ProtocolCapabilities) ChooseProtocol(inbound string) string {
+	inbound = normalizeProtocolName(inbound)
+	other := otherProtocol(inbound)
+	if other == "" {
+		return inbound
+	}
+	inKnown, inSupported := c.Lookup(inbound)
+	if inKnown && inSupported {
+		return inbound
+	}
+	otherKnown, otherSupported := c.Lookup(other)
+	if otherKnown && otherSupported {
+		return other
+	}
+	if inKnown && !inSupported && otherKnown && !otherSupported {
+		return inbound
+	}
+	if inKnown && !inSupported {
+		return other
+	}
+	return inbound
+}
+
+// ToExtra 返回可写入 accounts.extra 的 JSON 结构。
+func (c ProtocolCapabilities) ToExtra() map[string]any {
+	out := map[string]any{}
+	if c.Responses.Known {
+		out[ProtocolResponses] = capabilityEntryToExtra(c.Responses)
+	}
+	if c.ChatCompletions.Known {
+		out[ProtocolChatCompletions] = capabilityEntryToExtra(c.ChatCompletions)
+	}
+	return out
+}
+
+func capabilityEntryToExtra(c ProtocolCapability) map[string]any {
+	entry := map[string]any{"supported": c.Supported}
+	if !c.ProbedAt.IsZero() {
+		entry["probed_at"] = c.ProbedAt.UTC().Format(time.RFC3339)
+	}
+	return entry
+}
+
+// ResolveProtocolCapabilities 从 accounts.extra 读取双协议能力，并兼容旧键
+// openai_responses_supported：
+//   - 旧键 true → responses 已知支持；chat_completions 保持未知（等到下一轮探测）。
+//   - 旧键 false → responses 已知不支持，并隐含 chat_completions 支持（旧路由语义）。
+//
+// 新结构存在时按协议覆盖旧键结论。
+func ResolveProtocolCapabilities(extra map[string]any) ProtocolCapabilities {
+	var out ProtocolCapabilities
+	if extra == nil {
+		return out
+	}
+	if raw, ok := extra[ExtraKeyProtocolCapabilities]; ok {
+		out = parseProtocolCapabilities(raw)
+	}
+	if v, ok := extra[ExtraKeyResponsesSupported]; ok {
+		if supported, ok := v.(bool); ok {
+			if !out.Responses.Known {
+				out.Responses = ProtocolCapability{Known: true, Supported: supported}
+			}
+			if !supported && !out.ChatCompletions.Known {
+				out.ChatCompletions = ProtocolCapability{Known: true, Supported: true}
+			}
+		}
+	}
+	return out
+}
+
+type rawProtocolCapabilities struct {
+	Responses       *rawProtocolCapability `json:"responses"`
+	ChatCompletions *rawProtocolCapability `json:"chat_completions"`
+}
+
+type rawProtocolCapability struct {
+	Supported bool            `json:"supported"`
+	ProbedAt  json.RawMessage `json:"probed_at"`
+}
+
+func parseProtocolCapabilities(raw any) ProtocolCapabilities {
+	data, err := extraValueJSON(raw)
+	if err != nil || len(data) == 0 {
+		return ProtocolCapabilities{}
+	}
+	var parsed rawProtocolCapabilities
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return ProtocolCapabilities{}
+	}
+	return ProtocolCapabilities{
+		Responses:       parseRawProtocolCapability(parsed.Responses),
+		ChatCompletions: parseRawProtocolCapability(parsed.ChatCompletions),
+	}
+}
+
+func parseRawProtocolCapability(raw *rawProtocolCapability) ProtocolCapability {
+	if raw == nil {
+		return ProtocolCapability{}
+	}
+	return ProtocolCapability{
+		Known:     true,
+		Supported: raw.Supported,
+		ProbedAt:  parseProbedAt(raw.ProbedAt),
+	}
+}
+
+func parseProbedAt(raw json.RawMessage) time.Time {
+	if len(raw) == 0 || string(raw) == "null" {
+		return time.Time{}
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err != nil {
+		// 某些实现会把 probed_at 写成 Unix 秒。
+		var num float64
+		if err := json.Unmarshal(raw, &num); err != nil || num <= 0 {
+			return time.Time{}
+		}
+		return time.Unix(int64(num), 0).UTC()
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return time.Time{}
+	}
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
+		if ts, err := time.Parse(layout, text); err == nil {
+			return ts
+		}
+	}
+	if seconds, err := strconv.ParseInt(text, 10, 64); err == nil && seconds > 0 {
+		return time.Unix(seconds, 0).UTC()
+	}
+	return time.Time{}
+}
+
+func extraValueJSON(raw any) ([]byte, error) {
+	switch value := raw.(type) {
+	case nil:
+		return nil, nil
+	case json.RawMessage:
+		return value, nil
+	case []byte:
+		return value, nil
+	case string:
+		trimmed := strings.TrimSpace(value)
+		if strings.HasPrefix(trimmed, "{") {
+			return []byte(trimmed), nil
+		}
+		return json.Marshal(value)
+	default:
+		return json.Marshal(value)
+	}
+}
+
+func normalizeProtocolName(protocol string) string {
+	switch strings.TrimSpace(protocol) {
+	case ProtocolResponses:
+		return ProtocolResponses
+	case ProtocolChatCompletions:
+		return ProtocolChatCompletions
+	default:
+		return strings.TrimSpace(protocol)
+	}
+}
+
+func otherProtocol(protocol string) string {
+	switch normalizeProtocolName(protocol) {
+	case ProtocolResponses:
+		return ProtocolChatCompletions
+	case ProtocolChatCompletions:
+		return ProtocolResponses
+	default:
+		return ""
+	}
 }

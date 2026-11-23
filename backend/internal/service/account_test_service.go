@@ -46,6 +46,10 @@ const (
 	testClaudeAPIURL            = "https://api.anthropic.com/v1/messages?beta=true"
 	chatgptCodexAPIURL          = "https://chatgpt.com/backend-api/codex/responses"
 	defaultAntigravityTestModel = "claude-sonnet-4-6"
+
+	// accountTestEventUnsupported reports a capability gap (the account may be
+	// healthy) without turning it into a failed connection test.
+	accountTestEventUnsupported = "test_unsupported"
 )
 
 // TestEvent represents a SSE event for account testing
@@ -2236,6 +2240,11 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 		return s.sendErrorAndEnd(c, fmt.Sprintf("Unsupported account type: %s", account.Type))
 	}
 
+	// Official OpenAI keeps strict diagnostics. Custom OpenAI-compatible
+	// upstreams may not implement the Codex-only compaction_trigger extension,
+	// which is a capability gap rather than an account failure.
+	targetOfficial, targetKnown := openAICompactProbeTargetClassification(credentialAccount)
+
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
 	c.Writer.Header().Set("Cache-Control", "no-cache")
 	c.Writer.Header().Set("Connection", "keep-alive")
@@ -2340,19 +2349,52 @@ func (s *AccountTestService) testOpenAICompactConnection(c *gin.Context, account
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		if resp.StatusCode == http.StatusUnauthorized && s.accountRepo != nil {
-			errMsg := fmt.Sprintf("Authentication failed (401): %s", string(body))
-			_ = s.accountRepo.SetError(ctx, account.ID, errMsg)
+		if resp.StatusCode == http.StatusUnauthorized {
+			if s.accountRepo != nil {
+				errMsg := fmt.Sprintf("Authentication failed (401): %s", string(body))
+				_ = s.accountRepo.SetError(ctx, account.ID, errMsg)
+			}
+			return s.sendErrorAndEnd(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
+		}
+		if shouldReportOpenAICompactCapabilityUnsupported(resp.StatusCode, body, compactionFound, targetOfficial, targetKnown) {
+			return s.sendOpenAICompactCapabilityUnsupported(c, resp.StatusCode, body)
 		}
 		return s.sendErrorAndEnd(c, fmt.Sprintf("API returned %d: %s", resp.StatusCode, string(body)))
 	}
 
 	if !compactionFound {
+		if shouldReportOpenAICompactCapabilityUnsupported(resp.StatusCode, body, compactionFound, targetOfficial, targetKnown) {
+			return s.sendOpenAICompactCapabilityUnsupported(c, resp.StatusCode, body)
+		}
 		return s.sendErrorAndEnd(c, "Upstream returned 2xx without a compaction output item (native remote compaction v2 unsupported on this chain)")
 	}
 
 	s.sendEvent(c, TestEvent{Type: "content", Text: "Compact probe succeeded (native remote compaction v2)"})
 	s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
+	return nil
+}
+
+// sendOpenAICompactCapabilityUnsupported reports that the upstream simply does
+// not implement native remote compaction v2. The account itself is not marked
+// as failed; the capability flag (openai_compact_supported=false) has already
+// been persisted by the caller.
+func (s *AccountTestService) sendOpenAICompactCapabilityUnsupported(c *gin.Context, status int, body []byte) error {
+	detail := strings.TrimSpace(extractUpstreamErrorMessage(body))
+	if detail == "" && len(body) > 0 {
+		detail = strings.TrimSpace(string(body))
+	}
+	detail = truncateString(sanitizeUpstreamErrorMessage(detail), 512)
+
+	msg := fmt.Sprintf("Capability unsupported: upstream does not implement native remote compaction v2 (HTTP %d). The account may still work for normal requests; compact routing will be disabled.", status)
+	if detail != "" {
+		msg += " Details: " + detail
+	}
+	s.sendEvent(c, TestEvent{
+		Type:   accountTestEventUnsupported,
+		Status: "unsupported",
+		Code:   "openai_compact_capability_unsupported",
+		Text:   msg,
+	})
 	return nil
 }
 

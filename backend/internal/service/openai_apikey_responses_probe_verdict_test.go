@@ -2,9 +2,7 @@ package service
 
 import (
 	"context"
-	"io"
 	"net/http"
-	"strings"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
@@ -38,10 +36,9 @@ func runResponsesProbe(t *testing.T, status int, body string) map[string]any {
 	}
 	svc := &AccountTestService{
 		accountRepo: repo,
-		httpUpstream: &httpUpstreamRecorder{resp: &http.Response{
-			StatusCode: status,
-			Header:     make(http.Header),
-			Body:       io.NopCloser(strings.NewReader(body)),
+		httpUpstream: &httpUpstreamRecorder{responses: []*http.Response{
+			newOpenAIProtocolProbeTestResponse(status, body),
+			newOpenAIProtocolProbeTestResponse(status, body),
 		}},
 		cfg: &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
 	}
@@ -80,8 +77,11 @@ func TestProbeOpenAIAPIKeyResponsesSupport_InconclusiveResponseKeepsUnknown(t *t
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			require.Nil(t, runResponsesProbe(t, http.StatusOK, tc.body),
-				"判据不成立时必须保持 unknown，不得落标")
+			updates := runResponsesProbe(t, http.StatusOK, tc.body)
+			if updates != nil {
+				_, hasResponses := updates[openai_compat.ExtraKeyResponsesSupported]
+				require.False(t, hasResponses, "Responses 判据不成立时必须保持 unknown，不得落标")
+			}
 		})
 	}
 }

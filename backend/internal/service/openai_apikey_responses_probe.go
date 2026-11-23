@@ -1,26 +1,18 @@
 package service
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"io"
 	"log/slog"
 	"net/http"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	"github.com/tidwall/gjson"
 )
-
-// openaiResponsesProbeTimeout 是探测请求的超时时长。
-// 探测在后台 goroutine 中异步执行,不阻塞账号创建/更新;留出余量给推理型模型
-// 先思考再产出 function_call 的往返。超时则保持 unknown,不下结论。
-const openaiResponsesProbeTimeout = 15 * time.Second
 
 // responsesProbeMaxBodyBytes 限制读取探测响应体的字节数,够判定 output 项类型即可。
 const responsesProbeMaxBodyBytes = 256 * 1024
@@ -104,12 +96,15 @@ func selectResponsesProbeModel(account *Account) string {
 	return candidates[0]
 }
 
-// ProbeOpenAIAPIKeyResponsesSupport 探测 OpenAI APIKey 账号上游是否支持
-// /v1/responses 端点，并将结果持久化到 accounts.extra.openai_responses_supported。
+// ProbeOpenAIAPIKeyResponsesSupport 对 OpenAI APIKey 账号执行双协议能力探测：
+// /v1/chat/completions 与 /v1/responses。结果写入
+// accounts.extra.openai_protocol_capabilities（新结构），并同步写旧键
+// openai_responses_supported 供旧路径兼容。
 //
-// 调用时机：账号创建/更新后，且仅当 platform=openai && type=apikey 时。
+// 调用时机：账号创建/更新后，以及首次真实请求前的兜底（见
+// OpenAIGatewayService.ensureOpenAIProtocolCapabilities）。
 //
-// 探测策略（参见包文档 internal/pkg/openai_compat）：
+// Responses 探测策略（参见包文档 internal/pkg/openai_compat）：
 //   - 上游 404 / 405 → 端点不存在,写 false
 //   - 上游 2xx → 端点存在,进一步看工具能力:响应含 function_call 输出项才写 true;
 //     仅 reasoning / 无 function_call(如火山方舟 coding/v3 × kimi-k2.6)写 false
@@ -159,102 +154,30 @@ func (s *AccountTestService) ProbeOpenAIAPIKeyResponsesSupport(ctx context.Conte
 		return
 	}
 
-	apiKey := account.GetOpenAIApiKey()
-	if apiKey == "" {
-		logger.LegacyPrintf("service.openai_probe", "probe_skip_no_apikey: account_id=%d", accountID)
-		return
-	}
-	baseURL := account.GetOpenAIBaseURL()
-	if baseURL == "" {
-		baseURL = "https://api.openai.com"
-	}
-	normalizedBaseURL, err := s.validateUpstreamBaseURL(baseURL)
-	if err != nil {
-		logger.LegacyPrintf("service.openai_probe", "probe_invalid_baseurl: account_id=%d base_url=%q err=%v", accountID, baseURL, err)
-		return
-	}
+	result := probeOpenAIProtocolCapabilities(ctx, openAIProtocolProbeDeps{
+		accountRepo:         s.accountRepo,
+		httpUpstream:        s.httpUpstream,
+		cfg:                 s.cfg,
+		tlsFPProfileService: s.tlsFPProfileService,
+		validateBaseURL:     s.validateUpstreamBaseURL,
+	}, account, openAIProtocolAsyncProbeTimeout)
 
-	probeURL := buildOpenAIResponsesURL(normalizedBaseURL)
-	probeModel := selectResponsesProbeModel(account)
-
-	probeCtx, cancel := context.WithTimeout(ctx, openaiResponsesProbeTimeout)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(probeCtx, http.MethodPost, probeURL, bytes.NewReader(openaiResponsesProbePayload(probeModel)))
-	if err != nil {
-		logger.LegacyPrintf("service.openai_probe", "probe_build_request_failed: account_id=%d err=%v", accountID, err)
-		return
-	}
-	req = req.WithContext(WithHTTPUpstreamProfile(req.Context(), HTTPUpstreamProfileOpenAI))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("Accept", "application/json")
-	applyOpenAICodexProbeHeaders(req.Header)
-
-	// 账号级请求头覆写：能力探测与真实转发保持一致的最终头
-	account.ApplyHeaderOverrides(req.Context(), req.Header)
-
-	proxyURL := ""
-	if account.ProxyID != nil && account.Proxy != nil {
-		proxyURL = account.Proxy.URL()
-	}
-
-	resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
-	if err != nil {
-		// 网络层失败：不写标记，保持 unknown，下次重试或由网关 fallback 处理
-		logger.LegacyPrintf("service.openai_probe", "probe_request_failed: account_id=%d url=%s err=%v", accountID, probeURL, err)
-		return
-	}
-	defer func() { _ = resp.Body.Close() }()
-	bodyBytes, readErr := io.ReadAll(io.LimitReader(resp.Body, responsesProbeMaxBodyBytes))
-	// 有界排空剩余响应体:既帮助连接复用,又避免行为异常的上游用超大响应体拖住探测。
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, responsesProbeMaxBodyBytes))
-	if readErr != nil {
-		// 响应体读取失败(部分读取/传输错误):按网络层失败处理,保持 unknown,
-		// 不写标记——否则可能给一个 2xx 响应误写 supported=false。
-		logger.LegacyPrintf("service.openai_probe", "probe_read_body_failed: account_id=%d url=%s err=%v", accountID, probeURL, readErr)
-		return
-	}
-
-	// 本次响应不足以下结论时保持 unknown，与网络层失败、响应体读取失败一致：
-	// 标记一旦写成 false 就会一直粘住（只有下次账号创建/更新才重探），网关会静默
-	// 改走 /v1/chat/completions —— 对 Codex 客户端意味着 prompt 缓存前缀被打散。
-	// 宁可不写，让请求继续走既有的 Responses 路径。
-	if !responsesProbeVerdictIsConclusive(resp.StatusCode, bodyBytes) {
-		logger.LegacyPrintf("service.openai_probe",
-			"probe_inconclusive_keep_unknown: account_id=%d base_url=%s probe_model=%s status=%d response_status=%s reason=%s",
-			accountID, normalizedBaseURL, probeModel, resp.StatusCode,
-			gjson.GetBytes(bodyBytes, "status").String(),
-			gjson.GetBytes(bodyBytes, "incomplete_details.reason").String(),
-		)
-		return
-	}
-
-	supported := decideResponsesProbeSupport(resp.StatusCode, bodyBytes)
-
-	if err := s.accountRepo.UpdateExtra(ctx, accountID, map[string]any{
-		openai_compat.ExtraKeyResponsesSupported: supported,
-	}); err != nil {
-		logger.LegacyPrintf("service.openai_probe", "probe_persist_failed: account_id=%d supported=%v err=%v", accountID, supported, err)
-		return
-	}
-
-	if !supported {
+	if result.Responses.Conclusive && !result.Responses.Supported {
 		// 落标为不支持等于把该账号长期钉在 /v1/chat/completions 上，成本与缓存命中率
 		// 都会变化，且不会自动恢复。这条必须能被运维看到（#5371）。
 		slog.Warn(
 			"openai_responses_probe_marked_unsupported",
 			"account_id", accountID,
 			"account_name", account.Name,
-			"base_url", normalizedBaseURL,
-			"probe_model", probeModel,
-			"upstream_status", resp.StatusCode,
+			"base_url", account.GetOpenAIBaseURL(),
+			"probe_model", selectResponsesProbeModel(account),
 		)
 	}
-
 	logger.LegacyPrintf("service.openai_probe",
-		"probe_done: account_id=%d base_url=%s probe_model=%s status=%d supported=%v",
-		accountID, normalizedBaseURL, probeModel, resp.StatusCode, supported,
+		"protocol_probe_done: account_id=%d responses_conclusive=%v responses_supported=%v chat_conclusive=%v chat_supported=%v",
+		accountID,
+		result.Responses.Conclusive, result.Responses.Supported,
+		result.Chat.Conclusive, result.Chat.Supported,
 	)
 }
 

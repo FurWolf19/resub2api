@@ -211,6 +211,13 @@
             <Icon name="x" size="sm" :stroke-width="2" />
             <span>{{ errorMessage }}</span>
           </div>
+          <div
+            v-else-if="status === 'unsupported'"
+            class="mt-3 flex items-center gap-2 border-t border-gray-700 pt-3 text-amber-400"
+          >
+            <Icon name="infoCircle" size="sm" :stroke-width="2" />
+            <span>{{ errorMessage }}</span>
+          </div>
         </div>
 
         <!-- Copy Button -->
@@ -337,7 +344,9 @@
                 ? 'bg-green-500 text-white hover:bg-green-600'
                 : status === 'error'
                   ? 'bg-orange-500 text-white hover:bg-orange-600'
-                  : 'bg-primary-500 text-white hover:bg-primary-600'
+                  : status === 'unsupported'
+                    ? 'bg-amber-500 text-white hover:bg-amber-600'
+                    : 'bg-primary-500 text-white hover:bg-primary-600'
           ]"
         >
           <Icon
@@ -400,7 +409,7 @@ const emit = defineEmits<{
 }>()
 
 const terminalRef = ref<HTMLElement | null>(null)
-const status = ref<'idle' | 'connecting' | 'success' | 'error'>('idle')
+const status = ref<'idle' | 'connecting' | 'success' | 'error' | 'unsupported'>('idle')
 const outputLines = ref<OutputLine[]>([])
 const streamingContent = ref('')
 const errorMessage = ref('')
@@ -942,6 +951,7 @@ const handleEvent = (event: {
   type: string
   text?: string
   model?: string
+  status?: string
   success?: boolean
   error?: string
   image_url?: string
@@ -1034,6 +1044,17 @@ const handleEvent = (event: {
         status.value = 'error'
         errorMessage.value = event.error || t('admin.accounts.testFailed')
       }
+      break
+
+    case 'test_unsupported':
+      // Capability gap (e.g. upstream lacks Codex compaction support), not an
+      // account failure: show a warning-style result instead of a red error.
+      if (streamingContent.value) {
+        addLine(streamingContent.value, 'text-green-300')
+        streamingContent.value = ''
+      }
+      status.value = 'unsupported'
+      errorMessage.value = event.text || t('admin.accounts.testUnsupported')
       break
 
     case 'error':

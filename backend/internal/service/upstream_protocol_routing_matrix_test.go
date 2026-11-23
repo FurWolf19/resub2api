@@ -310,6 +310,28 @@ func matchesKnownZhipuNonAPIKeyDifference(tc routingMatrixCase, want, got routin
 		reflect.DeepEqual(got, routingObservation{Error: "account 801 missing api_key", Status: http.StatusOK})
 }
 
+// OpenAI APIKey auto 模式已改为“跟随入站协议”：能力未知的 Chat Completions
+// 入站不再默认升级为 Responses。这是本次需求唯一允许的矩阵差异。
+func matchesKnownOpenAIAutoInboundDifference(tc routingMatrixCase, want, got routingObservation) bool {
+	if tc.platform != PlatformOpenAI || tc.accountType != AccountTypeAPIKey ||
+		tc.mode != "" || tc.probe != "" || tc.ingress.name != "chat" {
+		return false
+	}
+	if len(want.Requests) != 1 || len(got.Requests) != 1 {
+		return false
+	}
+	oldReq, newReq := want.Requests[0], got.Requests[0]
+	if !strings.HasSuffix(oldReq.URL, "/v1/responses") || !strings.HasSuffix(newReq.URL, "/v1/chat/completions") {
+		return false
+	}
+	oldObs, newObs := want, got
+	oldObs.Requests = append([]routingUpstreamRequest(nil), want.Requests...)
+	newObs.Requests = append([]routingUpstreamRequest(nil), got.Requests...)
+	oldObs.Requests[0].URL, oldObs.Requests[0].BodyKind = "", ""
+	newObs.Requests[0].URL, newObs.Requests[0].BodyKind = "", ""
+	return reflect.DeepEqual(oldObs, newObs)
+}
+
 func TestUpstreamProtocolRoutingMatrixMatchesMainGolden(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	data, err := os.ReadFile(routingMatrixGoldenPath)
@@ -325,6 +347,7 @@ func TestUpstreamProtocolRoutingMatrixMatchesMainGolden(t *testing.T) {
 	var differences []string
 	mismatched := 0
 	knownDifferences := 0
+	knownAutoInboundDifferences := 0
 	for i, tc := range cases {
 		index := golden.Results[i]
 		require.GreaterOrEqual(t, index, 0)
@@ -338,6 +361,10 @@ func TestUpstreamProtocolRoutingMatrixMatchesMainGolden(t *testing.T) {
 			knownDifferences++
 			continue
 		}
+		if matchesKnownOpenAIAutoInboundDifference(tc, want, got) {
+			knownAutoInboundDifferences++
+			continue
+		}
 		mismatched++
 		if len(differences) < 12 {
 			differences = append(differences, fmt.Sprintf("%s\nmain: %s\ncurrent: %s", tc.key(), want, got))
@@ -347,4 +374,5 @@ func TestUpstreamProtocolRoutingMatrixMatchesMainGolden(t *testing.T) {
 	// 2 account types × 4 modes × 3 probe states × 4 address configurations ×
 	// 2 model spellings. A disappeared or expanded exception requires review.
 	require.Equal(t, 192, knownDifferences, "unexpected change to the declared Zhipu non-API-Key difference")
+	require.Equal(t, 48, knownAutoInboundDifferences, "unexpected change to the declared OpenAI auto inbound difference")
 }

@@ -10,6 +10,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
@@ -60,8 +61,9 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletions(
 	account *Account,
 	body []byte,
 	defaultMappedModel string,
+	allowProtocolFallback ...bool,
 ) (*OpenAIForwardResult, error) {
-	return s.forwardAsRawChatCompletionsWithStartTime(ctx, c, account, body, defaultMappedModel, time.Now())
+	return s.forwardAsRawChatCompletionsWithStartTime(ctx, c, account, body, defaultMappedModel, time.Now(), allowProtocolFallback...)
 }
 
 func (s *OpenAIGatewayService) forwardAsRawChatCompletionsWithStartTime(
@@ -71,6 +73,7 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletionsWithStartTime(
 	body []byte,
 	defaultMappedModel string,
 	startTime time.Time,
+	allowProtocolFallback ...bool,
 ) (*OpenAIForwardResult, error) {
 
 	// 1. Parse minimal fields needed for routing/billing
@@ -222,6 +225,10 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletionsWithStartTime(
 	// 7. Handle error response with failover
 	if resp.StatusCode >= 400 {
 		respBody, upstreamMsg := s.readOpenAIUpstreamError(resp)
+		if len(allowProtocolFallback) > 0 && allowProtocolFallback[0] &&
+			s.shouldUseOpenAIProtocolFallback(c, account, openai_compat.ProtocolChatCompletions, resp.StatusCode, respBody) {
+			return nil, &openAIProtocolUnsupportedError{Protocol: openai_compat.ProtocolChatCompletions, StatusCode: resp.StatusCode}
+		}
 		if account.Platform == PlatformGrok {
 			kind := "http_error"
 			if s.shouldFailoverGrokUpstreamError(resp.StatusCode, respBody) {

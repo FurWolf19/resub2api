@@ -105,6 +105,7 @@ export default {
         name: '名称',
         id: '账号ID',
         platformType: '平台/类型',
+        protocolCapabilities: '协议能力',
         platform: '平台',
         type: '类型',
         capacity: '容量',
@@ -124,6 +125,23 @@ export default {
         createdAt: '创建时间',
         expiresAt: '过期时间',
         actions: '操作'
+      },
+      protocolCapabilities: {
+        chat: 'Chat',
+        chatCompletions: 'Chat Completions',
+        responses: 'Responses',
+        force: '强制',
+        status: {
+          supported: '支持',
+          unsupported: '不支持',
+          unknown: '未知'
+        },
+        probedAt: '探测时间：{time}',
+        mode: '模式：{mode}',
+        modeAuto: '自动',
+        modeForceResponses: '强制 Responses',
+        modeForceChatCompletions: '强制 Chat Completions',
+        modeOverrideHint: '强制模式覆盖探测结论'
       },
       schedulerScore: {
         baseShort: '普通',
@@ -814,8 +832,8 @@ export default {
         responsesWebsocketsV2PassthroughHint: '当前已开启自动透传：仅影响 HTTP 透传链路，不影响 WS mode。',
         responsesMode: 'Responses API 支持',
         responsesModeDesc:
-          '仅对 OpenAI API Key 的文本转发链路生效。自动跟随探测结果，强制模式会覆盖自动探测。',
-        responsesModeAuto: '自动',
+          '仅对 OpenAI API Key 的文本转发链路生效。自动模式跟随下游入站协议：下游用 Responses 就发 Responses，用 Chat Completions 就发 Chat Completions；上游不支持对应端点时自动转换。强制模式会覆盖自动探测。',
+        responsesModeAuto: '自动（跟随下游协议）',
         responsesModeForceResponses: '强制 Responses',
         responsesModeForceChatCompletions: '强制 Chat Completions',
         responsesModeTextDisabledHint: '未启用 Responses / Chat Completions 端点时，此设置不适用。',
@@ -830,7 +848,7 @@ export default {
         endpointCapabilitiesDesc:
           '用于调度筛选。文本端点会跟随上方 Responses API 支持显示为 Responses、Chat Completions 或自动模式；Embeddings 独立控制 /v1/embeddings。',
         capabilityResponses: 'Responses',
-        capabilityTextAuto: 'Responses / Chat Completions（自动）',
+        capabilityTextAuto: 'Responses / Chat Completions（跟随下游）',
         capabilityResponsesAuto: 'Responses（自动探测）',
         capabilityChatCompletions: 'Chat Completions',
         capabilityChatCompletionsAuto: 'Chat Completions（自动探测）',
@@ -1773,6 +1791,7 @@ export default {
       readyToTest: '准备测试。点击"开始测试"按钮开始...',
       connectingToApi: '连接 API 中...',
       testCompleted: '测试完成！',
+      testUnsupported: '能力不支持',
       connectedToApi: '已连接到 API',
       usingModel: '使用模型：{model}',
       sendingTestMessage: '发送测试消息："hi"',

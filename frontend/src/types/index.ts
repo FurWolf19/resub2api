@@ -1291,7 +1291,7 @@ export interface Account {
   ollama_cloud_usage?: OllamaCloudUsageState
   opencode_go_usage?: OpenCodeGoUsageState
   // Extra fields including Codex usage, OpenAI compact capability, and model-level rate limits.
-  extra?: (CodexUsageSnapshot & OpenAICompactState & {
+  extra?: (CodexUsageSnapshot & OpenAICompactState & OpenAIProtocolCapabilitiesState & {
     model_rate_limits?: Record<string, { rate_limited_at: string; rate_limit_reset_at: string }>
     antigravity_credits_overages?: Record<string, { activated_at: string; active_until: string }>
     upstream_billing_probe_enabled?: boolean
@@ -1614,6 +1614,24 @@ export interface OpenAICompactState {
 export interface OpenAIResponsesState {
   openai_responses_mode?: OpenAIResponsesMode
   openai_responses_supported?: boolean
+}
+
+// 单一上游协议的探测结论（accounts.extra.openai_protocol_capabilities.<protocol>）。
+// supported 缺失或非布尔值时按“未知”处理；probed_at 由后端写成 RFC3339 字符串，
+// 历史数据里也出现过 Unix 秒（数字或数字字符串）。
+export interface OpenAIProtocolCapabilityEntry {
+  supported?: boolean
+  probed_at?: string | number | null
+}
+
+// OpenAI 双协议能力探测状态。新键 openai_protocol_capabilities 与旧键
+// openai_responses_supported / openai_responses_mode 会同时存在，读取方需按
+// 新键 → 旧键 → mode 覆盖的顺序解析。
+export interface OpenAIProtocolCapabilitiesState extends OpenAIResponsesState {
+  openai_protocol_capabilities?: {
+    responses?: OpenAIProtocolCapabilityEntry
+    chat_completions?: OpenAIProtocolCapabilityEntry
+  }
 }
 
 export interface CreateAccountRequest {

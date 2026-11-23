@@ -1236,6 +1236,9 @@ func rawChatCompletionsTestAccount() *Account {
 			"api_key":  "sk-test",
 			"base_url": "http://upstream.example",
 		},
+		Extra: map[string]any{
+			openai_compat.ExtraKeyResponsesSupported: true,
+		},
 	}
 }
 

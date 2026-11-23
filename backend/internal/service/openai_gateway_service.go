@@ -517,6 +517,21 @@ type OpenAIGatewayService struct {
 	// 剥离跨账号回带（openai_codex_turn_state.go）。
 	openaiCodexTurnStateOrigins sync.Map
 	openaiCodexTurnStateWrites  atomic.Uint64
+
+	// openAIProtocolCapabilityProbeEnabled 由生产组装层显式开启（wire_gen 调用
+	// EnableOpenAIProtocolCapabilityProbe）。单元测试里大量直接构造
+	// &OpenAIGatewayService{} 的 fake service 不应在真实请求前额外发探测。
+	openAIProtocolCapabilityProbeEnabled bool
+}
+
+// EnableOpenAIProtocolCapabilityProbe 打开 OpenAI APIKey auto 模式的首次请求
+// 阻塞探测。生产组装层显式调用；直接在测试里构造的 fake service 保持关闭，
+// 避免探测请求污染 fake upstream 的调用序列。
+func EnableOpenAIProtocolCapabilityProbe(s *OpenAIGatewayService) *OpenAIGatewayService {
+	if s != nil {
+		s.openAIProtocolCapabilityProbeEnabled = true
+	}
+	return s
 }
 
 // NewOpenAIGatewayService creates a new OpenAIGatewayService

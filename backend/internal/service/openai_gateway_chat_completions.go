@@ -111,6 +111,7 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 	rememberOpenCodeInboundBody(c, body)
 	beginUpstreamResponseModelObservation(c)
 	ClearActualOpenAIUpstreamEndpoint(c)
+	account = s.ensureOpenAIProtocolCapabilities(ctx, account)
 	if shouldForwardOpenAIResponsesViaRawChatCompletions(account) {
 		SetActualOpenAIUpstreamEndpoint(c, "/v1/chat/completions")
 	}
@@ -165,7 +166,8 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 	if account.IsOpenCodeGo() && IsOpenCodeUnsupportedModel(routingModel) {
 		return nil, writeOpenCodeUnsupportedModelError(c, false, routingModel)
 	}
-	switch s.resolveUpstreamProtocolFor(ctx, account, inbound, routingModel) {
+	requiresResponses := openAIProtocolRequiresResponses(c, account, gjson.GetBytes(body, "model").String(), body, false)
+	switch s.resolveUpstreamProtocolForRequest(ctx, account, inbound, routingModel, requiresResponses) {
 	case APIProtocolAnthropic:
 		if convertResponsesShape {
 			return s.forwardResponsesViaNativeAnthropic(ctx, c, account, body, "")
@@ -173,14 +175,26 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 		// CC 入站经 CC→Responses→Anthropic 转换链直通供应商原生 Anthropic 端点。
 		return s.forwardChatCompletionsViaNativeAnthropic(ctx, c, account, body, defaultMappedModel)
 	case APIProtocolChatCompletions:
+		SetActualOpenAIUpstreamEndpoint(c, "/v1/chat/completions")
+		rawBody := body
 		if convertResponsesShape {
-			chatBody, err := s.convertResponsesShapedChatBody(body)
-			if err != nil {
-				return nil, err
+			converted, convErr := s.convertResponsesShapedChatBody(body)
+			if convErr != nil {
+				return nil, convErr
 			}
-			return s.forwardAsRawChatCompletions(ctx, c, account, chatBody, defaultMappedModel)
+			rawBody = converted
 		}
-		return s.forwardAsRawChatCompletions(ctx, c, account, body, defaultMappedModel)
+		result, rawErr := s.forwardAsRawChatCompletions(ctx, c, account, rawBody, defaultMappedModel, true)
+		if unsupported, ok := asOpenAIProtocolUnsupportedError(rawErr); ok {
+			account = s.recordOpenAIProtocolCapability(ctx, account, unsupported.Protocol, false)
+			markOpenAIProtocolFallbackTried(c)
+			retryResult, retryErr := s.forwardAsChatCompletions(ctx, c, account, body, promptCacheKey, defaultMappedModel, compatPromptCacheTenantIsolated)
+			if retryErr == nil {
+				s.recordOpenAIProtocolCapability(ctx, account, openai_compat.ProtocolResponses, true)
+			}
+			return retryResult, retryErr
+		}
+		return result, rawErr
 	}
 	// 上游为 Responses（含 adaptive 下 Responses 形状入站且供应商有原生
 	// Responses 端点）：走下方 Chat Completions ↔ Responses 转换链。
@@ -423,14 +437,31 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 		}
 		if account.Type == AccountTypeAPIKey &&
 			!account.routesByModel() &&
-			openai_compat.ResolveResponsesSupport(account.Extra) == openai_compat.ResponsesSupportUnknown &&
-			!isResponsesEndpointSupportedByStatus(resp.StatusCode) {
-			logger.L().Info("openai chat_completions: /responses unsupported, falling back to raw chat completions",
+			!requiresResponses &&
+			openAIResponsesAutoMode(account) &&
+			!openAIProtocolFallbackTried(c) &&
+			!isResponsesEndpointSupportedByStatus(resp.StatusCode) &&
+			!isResponsesProbeModelUnavailable(resp.StatusCode, respBody) {
+			logger.L().Info("openai chat_completions: /responses unsupported, following inbound protocol fallback",
 				zap.Int64("account_id", account.ID),
 				zap.Int("upstream_status", resp.StatusCode),
 				zap.String("upstream_message", upstreamMsg),
 			)
-			return s.forwardAsRawChatCompletionsWithStartTime(ctx, c, account, body, defaultMappedModel, startTime)
+			account = s.recordOpenAIProtocolCapability(ctx, account, openai_compat.ProtocolResponses, false)
+			markOpenAIProtocolFallbackTried(c)
+			if isResponsesShape {
+				SetActualOpenAIUpstreamEndpoint(c, "/v1/chat/completions")
+				fallbackResult, fallbackErr := s.forwardResponsesViaRawChatCompletions(ctx, c, account, body, startTime)
+				if fallbackErr == nil {
+					s.recordOpenAIProtocolCapability(ctx, account, openai_compat.ProtocolChatCompletions, true)
+				}
+				return fallbackResult, fallbackErr
+			}
+			fallbackResult, fallbackErr := s.forwardAsRawChatCompletionsWithStartTime(ctx, c, account, body, defaultMappedModel, startTime, false)
+			if fallbackErr == nil {
+				s.recordOpenAIProtocolCapability(ctx, account, openai_compat.ProtocolChatCompletions, true)
+			}
+			return fallbackResult, fallbackErr
 		}
 		responsesMode, _ := account.Extra[openai_compat.ExtraKeyResponsesMode].(string)
 		if account.IsOpenAIApiKey() &&

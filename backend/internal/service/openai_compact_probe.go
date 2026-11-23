@@ -69,6 +69,64 @@ func openAICompactProbeFoundCompactionItem(body []byte) bool {
 	return responsesOutputHasCompactionItem(body)
 }
 
+// openAICompactProbeTargetClassification identifies whether a compact probe is
+// sent to the official OpenAI endpoint. The official endpoint keeps the strict
+// "non-200 (and 2xx without a compaction item) means test failed" diagnostics,
+// while custom OpenAI-compatible upstreams may legitimately not implement the
+// Codex compaction_trigger extension.
+//
+// known=false means the target cannot be classified (non-API-key, non-OAuth);
+// callers then fall back to the probe's own unsupported classification.
+func openAICompactProbeTargetClassification(account *Account) (official bool, known bool) {
+	if account == nil {
+		return false, false
+	}
+	if account.IsOAuth() {
+		return true, true
+	}
+	if account.Type != AccountTypeAPIKey {
+		return false, false
+	}
+	baseURL := strings.TrimSpace(account.GetOpenAIBaseURL())
+	if baseURL == "" {
+		return true, true
+	}
+	return isOfficialOpenAIModelsBaseURL(baseURL), true
+}
+
+// shouldReportOpenAICompactCapabilityUnsupported decides whether a probe result
+// should be reported as "capability unsupported" instead of an account failure.
+//
+// Rules:
+//   - official OpenAI: never downgrade (existing diagnostics stay unchanged).
+//   - custom upstream: 2xx without a compaction item is the
+//     "compaction_trigger swallowed" shape; 400/403/422 only when the probe
+//     explicitly recognizes an unsupported/not-support message.
+//   - unknown target: follow the probe's unsupported classification directly.
+//   - all other non-2xx statuses remain ordinary failures.
+func shouldReportOpenAICompactCapabilityUnsupported(status int, body []byte, compactionFound, official, known bool) bool {
+	if known && official {
+		return false
+	}
+	if !known {
+		// Target cannot be classified: follow the probe's own unsupported
+		// detection so custom/unknown chains are not misreported as broken.
+		if status >= 200 && status < 300 {
+			return !compactionFound
+		}
+		return shouldMarkOpenAICompactUnsupported(status, body)
+	}
+	if status >= 200 && status < 300 {
+		return !compactionFound
+	}
+	switch status {
+	case http.StatusBadRequest, http.StatusForbidden, http.StatusUnprocessableEntity:
+		return shouldMarkOpenAICompactUnsupported(status, body)
+	default:
+		return false
+	}
+}
+
 func shouldMarkOpenAICompactUnsupported(status int, body []byte) bool {
 	switch status {
 	case http.StatusNotFound, http.StatusMethodNotAllowed, http.StatusNotImplemented:

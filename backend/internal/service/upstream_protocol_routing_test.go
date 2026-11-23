@@ -90,7 +90,8 @@ func TestResolveUpstreamProtocol(t *testing.T) {
 		}(), cc, "gpt-5.6-luna", responses},
 
 		// 无 profile 的账号按探针决定 Responses / CC
-		{"openai apikey unknown probe", openAIWithProbe(AccountTypeAPIKey, nil), cc, "", responses},
+		{"openai apikey unknown probe follows inbound cc", openAIWithProbe(AccountTypeAPIKey, nil), cc, "", cc},
+		{"openai apikey unknown probe follows inbound responses", openAIWithProbe(AccountTypeAPIKey, nil), responses, "", responses},
 		{"openai apikey probe unsupported", openAIWithProbe(AccountTypeAPIKey, false), anthropic, "", cc},
 		{"openai oauth ignores probe", openAIWithProbe(AccountTypeOAuth, false), cc, "", responses},
 	}

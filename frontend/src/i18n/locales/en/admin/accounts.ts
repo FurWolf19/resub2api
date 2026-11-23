@@ -259,6 +259,7 @@ export default {
         name: 'Name',
         id: 'Account ID',
         platformType: 'Platform/Type',
+        protocolCapabilities: 'Protocol capabilities',
         platform: 'Platform',
         type: 'Type',
         capacity: 'Capacity',
@@ -278,6 +279,23 @@ export default {
         createdAt: 'Created',
         expiresAt: 'Expires At',
         actions: 'Actions'
+      },
+      protocolCapabilities: {
+        chat: 'Chat',
+        chatCompletions: 'Chat Completions',
+        responses: 'Responses',
+        force: 'Forced',
+        status: {
+          supported: 'Supported',
+          unsupported: 'Unsupported',
+          unknown: 'Unknown'
+        },
+        probedAt: 'Probed at: {time}',
+        mode: 'Mode: {mode}',
+        modeAuto: 'Auto',
+        modeForceResponses: 'Force Responses',
+        modeForceChatCompletions: 'Force Chat Completions',
+        modeOverrideHint: 'Forced mode overrides the probe result'
       },
       schedulerScore: {
         baseShort: 'Base',
@@ -691,8 +709,8 @@ export default {
           'Automatic passthrough is currently enabled: it only affects HTTP passthrough and does not disable WS mode.',
         responsesMode: 'Responses API support',
         responsesModeDesc:
-          'Only applies to the OpenAI API Key text forwarding path. Auto follows probe results; force modes override probing.',
-        responsesModeAuto: 'Auto',
+          'Only applies to the OpenAI API Key text forwarding path. Auto follows the inbound protocol: Responses requests use Responses, Chat Completions requests use Chat Completions, and the gateway converts automatically when the upstream lacks that endpoint. Force modes override probing.',
+        responsesModeAuto: 'Auto (follow inbound protocol)',
         responsesModeForceResponses: 'Force Responses',
         responsesModeForceChatCompletions: 'Force Chat Completions',
         responsesModeTextDisabledHint:
@@ -708,7 +726,7 @@ export default {
         endpointCapabilitiesDesc:
           'Used by account routing. The text endpoint follows the Responses API support setting above and is shown as Responses, Chat Completions, or auto mode; Embeddings independently controls /v1/embeddings.',
         capabilityResponses: 'Responses',
-        capabilityTextAuto: 'Responses / Chat Completions (Auto)',
+        capabilityTextAuto: 'Responses / Chat Completions (follow inbound)',
         capabilityResponsesAuto: 'Responses (auto probe)',
         capabilityChatCompletions: 'Chat Completions',
         capabilityChatCompletionsAuto: 'Chat Completions (auto probe)',
@@ -1674,6 +1692,7 @@ export default {
       connectingToApi: 'Connecting to API...',
       testCompleted: 'Test completed successfully!',
       testFailed: 'Test failed',
+      testUnsupported: 'Capability unsupported',
       connectedToApi: 'Connected to API',
       usingModel: 'Using model: {model}',
       sendingTestMessage: 'Sending test message: "hi"',

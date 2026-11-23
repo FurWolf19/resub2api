@@ -29,10 +29,9 @@ func TestProbeOpenAIAPIKeyResponsesSupportUsesCodexProbeHeaders(t *testing.T) {
 		stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{account}},
 		updateExtraCalls:      updateCalls,
 	}
-	upstream := &httpUpstreamRecorder{resp: &http.Response{
-		StatusCode: http.StatusOK,
-		Header:     make(http.Header),
-		Body:       io.NopCloser(strings.NewReader(`{"output":[{"type":"function_call","name":"probe_ping"}]}`)),
+	upstream := &httpUpstreamRecorder{responses: []*http.Response{
+		newOpenAIProtocolProbeTestResponse(http.StatusOK, `{"output":[{"type":"function_call","name":"probe_ping"}]}`),
+		newOpenAIProtocolProbeTestResponse(http.StatusOK, `{"output":[{"type":"function_call","name":"probe_ping"}]}`),
 	}}
 	svc := &AccountTestService{
 		accountRepo:  repo,
@@ -117,10 +116,9 @@ func TestProbeOpenAIAPIKeyResponsesSupportSkipsForcedModes(t *testing.T) {
 				stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{account}},
 				updateExtraCalls:      updateCalls,
 			}
-			upstream := &httpUpstreamRecorder{resp: &http.Response{
-				StatusCode: http.StatusOK,
-				Header:     make(http.Header),
-				Body:       io.NopCloser(strings.NewReader(`{"output":[{"type":"function_call","name":"probe_ping"}]}`)),
+			upstream := &httpUpstreamRecorder{responses: []*http.Response{
+				newOpenAIProtocolProbeTestResponse(http.StatusOK, `{"output":[{"type":"function_call","name":"probe_ping"}]}`),
+				newOpenAIProtocolProbeTestResponse(http.StatusOK, `{"output":[{"type":"function_call","name":"probe_ping"}]}`),
 			}}
 			svc := &AccountTestService{
 				accountRepo:  repo,
@@ -209,4 +207,37 @@ func TestSelectResponsesProbeModel(t *testing.T) {
 		"model_mapping": map[string]any{"a": "gpt-*"},
 	}}
 	require.Equal(t, openai.DefaultTestModel, selectResponsesProbeModel(acctAllWild))
+}
+
+func newOpenAIProtocolProbeTestResponse(status int, body string) *http.Response {
+	return &http.Response{
+		StatusCode: status,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}
+}
+
+func TestDecideChatCompletionsProbeSupport(t *testing.T) {
+	cases := []struct {
+		name       string
+		status     int
+		body       string
+		supported  bool
+		conclusive bool
+	}{
+		{name: "200", status: http.StatusOK, body: `{}`, supported: true, conclusive: true},
+		{name: "404 endpoint absent", status: http.StatusNotFound, body: `{"error":{"message":"not found"}}`, conclusive: true},
+		{name: "405 endpoint absent", status: http.StatusMethodNotAllowed, conclusive: true},
+		{name: "401 unknown", status: http.StatusUnauthorized, conclusive: false},
+		{name: "model not found unknown", status: http.StatusNotFound, body: `{"error":{"code":"model_not_found"}}`, conclusive: false},
+		{name: "400 conservative supported", status: http.StatusBadRequest, body: `{}`, supported: true, conclusive: true},
+		{name: "500 conservative supported", status: http.StatusInternalServerError, supported: true, conclusive: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			supported, conclusive := decideChatCompletionsProbeSupport(tc.status, []byte(tc.body))
+			require.Equal(t, tc.supported, supported)
+			require.Equal(t, tc.conclusive, conclusive)
+		})
+	}
 }

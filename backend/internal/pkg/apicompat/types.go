@@ -7,6 +7,10 @@ package apicompat
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"math"
+	"strconv"
+	"strings"
 )
 
 // ---------------------------------------------------------------------------
@@ -498,6 +502,58 @@ type ResponsesResponse struct {
 	// xAI. A custom_tool_call that IsServerSideSearchCall then stays in the
 	// output but is not rendered as a tool call, because xAI runs it itself.
 	XAIServerSideSearch bool `json:"-"`
+}
+
+// UnmarshalJSON 兼容上游把 created_at 写成整数、浮点或数字字符串的形式。
+// 严格的 Responses 客户端要求出站仍是整数，因此这里只放宽入站解析，字段类型
+// 保持 int64，默认序列化行为不变。
+func (r *ResponsesResponse) UnmarshalJSON(data []byte) error {
+	type responsesResponseAlias ResponsesResponse
+	var aux struct {
+		CreatedAt json.RawMessage `json:"created_at"`
+		*responsesResponseAlias
+	}
+	aux.responsesResponseAlias = (*responsesResponseAlias)(r)
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	if len(aux.CreatedAt) == 0 || string(aux.CreatedAt) == "null" {
+		return nil
+	}
+	createdAt, err := parseResponsesCreatedAt(aux.CreatedAt)
+	if err != nil {
+		return fmt.Errorf("parse responses created_at: %w", err)
+	}
+	r.CreatedAt = createdAt
+	return nil
+}
+
+func parseResponsesCreatedAt(raw json.RawMessage) (int64, error) {
+	text := strings.TrimSpace(string(raw))
+	if text == "" || text == "null" {
+		return 0, nil
+	}
+	if text[0] == '"' {
+		var value string
+		if err := json.Unmarshal(raw, &value); err != nil {
+			return 0, err
+		}
+		text = strings.TrimSpace(value)
+		if text == "" {
+			return 0, nil
+		}
+	}
+	if integer, err := strconv.ParseInt(text, 10, 64); err == nil {
+		return integer, nil
+	}
+	value, err := strconv.ParseFloat(text, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid timestamp %q", text)
+	}
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return 0, fmt.Errorf("invalid timestamp %q", text)
+	}
+	return int64(value), nil
 }
 
 // ResponsesError describes an error in a failed response.

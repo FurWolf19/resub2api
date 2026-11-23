@@ -157,8 +157,16 @@ func TestForwardResponses_PassthroughFlagWithUnsupportedResponsesUsesAccountMapp
 			result, err := svc.Forward(context.Background(), c, account, body)
 			require.NoError(t, err)
 			require.NotNil(t, result)
-			require.Equal(t, "http://upstream.example/v1/chat/completions", upstream.lastReq.URL.String())
-			require.Equal(t, "gpt-5.4-account", gjson.GetBytes(upstream.lastBody, "model").String())
+			wantURL := "http://upstream.example/v1/chat/completions"
+			wantModel := "gpt-5.4-account"
+			if path == "/v1/responses/compact" {
+				// /responses/compact 是硬约束：即使能力缓存标记 Responses 不支持，
+				// 也必须走 Responses 路径（不能静默降级为 CC）。透传分支保留请求模型。
+				wantURL = "http://upstream.example/v1/responses/compact"
+				wantModel = "gpt-5.4-channel"
+			}
+			require.Equal(t, wantURL, upstream.lastReq.URL.String())
+			require.Equal(t, wantModel, gjson.GetBytes(upstream.lastBody, "model").String())
 		})
 	}
 }

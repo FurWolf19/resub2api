@@ -262,3 +262,9 @@ func (s *OpenAIGatewayService) fetchModelProtocolCatalog(ctx context.Context, ur
 func (s *OpenAIGatewayService) resolveUpstreamProtocolFor(ctx context.Context, account *Account, inbound, model string) string {
 	return resolveUpstreamProtocol(account, inbound, model, s.modelCatalogProtocols(ctx, account, model))
 }
+
+// resolveUpstreamProtocolForRequest 在 resolveUpstreamProtocolFor 基础上带上
+// 请求级“必须 Responses”的硬约束（生图、compact、sol/terra 工具调用）。
+func (s *OpenAIGatewayService) resolveUpstreamProtocolForRequest(ctx context.Context, account *Account, inbound, model string, requiresResponses bool) string {
+	return resolveUpstreamProtocol(account, inbound, model, s.modelCatalogProtocols(ctx, account, model), requiresResponses)
+}

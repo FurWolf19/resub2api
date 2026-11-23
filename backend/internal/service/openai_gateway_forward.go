@@ -22,6 +22,7 @@ import (
 func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte) (*OpenAIForwardResult, error) {
 	beginUpstreamResponseModelObservation(c)
 	ClearActualOpenAIUpstreamEndpoint(c)
+	account = s.ensureOpenAIProtocolCapabilities(ctx, account)
 	if shouldForwardOpenAIResponsesViaRawChatCompletions(account) {
 		SetActualOpenAIUpstreamEndpoint(c, "/v1/chat/completions")
 	}
@@ -185,14 +186,26 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 	if account.IsOpenCodeGo() && IsOpenCodeUnsupportedModel(routingModel) {
 		return nil, writeOpenCodeUnsupportedModelError(c, false, routingModel)
 	}
-	switch s.resolveUpstreamProtocolFor(ctx, account, APIProtocolResponses, routingModel) {
+	requiresResponses := openAIProtocolRequiresResponses(c, account, reqModel, body, compactPath)
+	switch s.resolveUpstreamProtocolForRequest(ctx, account, APIProtocolResponses, routingModel, requiresResponses) {
 	case APIProtocolAnthropic:
 		// Responses 客户端 × Anthropic 上游：转成 Anthropic 请求走原生端点。不能落到
 		// raw-CC 分支——其 URL 构造会把 anthropic base 当 CC base 用。
 		// 账号映射未命中时以去除首尾空白的请求模型兜底，计费名与上游模型名一致。
 		return s.forwardResponsesViaNativeAnthropic(ctx, c, account, body, reqModel)
 	case APIProtocolChatCompletions:
-		return s.forwardResponsesViaRawChatCompletions(ctx, c, account, body, startTime)
+		SetActualOpenAIUpstreamEndpoint(c, "/v1/chat/completions")
+		result, forwardErr := s.forwardResponsesViaRawChatCompletions(ctx, c, account, body, startTime)
+		if unsupported, ok := asOpenAIProtocolUnsupportedError(forwardErr); ok {
+			account = s.recordOpenAIProtocolCapability(ctx, account, unsupported.Protocol, false)
+			markOpenAIProtocolFallbackTried(c)
+			retryResult, retryErr := s.Forward(ctx, c, account, body)
+			if retryErr == nil {
+				s.recordOpenAIProtocolCapability(ctx, account, openai_compat.ProtocolResponses, true)
+			}
+			return retryResult, retryErr
+		}
+		return result, forwardErr
 	}
 	SetActualOpenAIUpstreamEndpoint(c, openAIResponsesUpstreamEndpoint)
 	if account.IsOpenAI() && (account.IsOpenAIApiKey() || account.IsOpenAIOAuthLike()) {
@@ -1126,6 +1139,19 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
 			upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
 			upstreamCode := extractUpstreamErrorCode(respBody)
+			if !requiresResponses && s.shouldUseOpenAIProtocolFallback(c, account, openai_compat.ProtocolResponses, resp.StatusCode, respBody) {
+				account = s.recordOpenAIProtocolCapability(ctx, account, openai_compat.ProtocolResponses, false)
+				markOpenAIProtocolFallbackTried(c)
+				if resp.Body != nil {
+					_ = resp.Body.Close()
+				}
+				SetActualOpenAIUpstreamEndpoint(c, "/v1/chat/completions")
+				fallbackResult, fallbackErr := s.forwardResponsesViaRawChatCompletions(ctx, c, account, body, startTime)
+				if fallbackErr == nil {
+					s.recordOpenAIProtocolCapability(ctx, account, openai_compat.ProtocolChatCompletions, true)
+				}
+				return fallbackResult, fallbackErr
+			}
 			if !agentTaskRecoveryTried && s.isAgentIdentityAccount(ctx, account) && isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, respBody) {
 				agentTaskRecoveryTried = true
 				expectedTaskID := account.GetCredential("task_id")

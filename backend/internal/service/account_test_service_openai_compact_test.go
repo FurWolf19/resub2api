@@ -2,6 +2,9 @@ package service
 
 import (
 	"bytes"
+	"context"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -19,6 +22,43 @@ import (
 // output_item.done 携带 compaction item + response.completed。
 const compactProbeSSESuccessBody = "data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"compaction\",\"id\":\"cmp_probe\",\"encrypted_content\":\"blob\"}}\n\n" +
 	"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_probe\",\"output\":[]}}\n\n"
+
+// compactProbeStateRepo records account error-state writes so tests can assert
+// that a capability gap is not persisted as an account failure.
+type compactProbeStateRepo struct {
+	snapshotUpdateAccountRepo
+	setErrorCalls []string
+}
+
+func (r *compactProbeStateRepo) SetError(_ context.Context, _ int64, errorMsg string) error {
+	r.setErrorCalls = append(r.setErrorCalls, errorMsg)
+	return nil
+}
+
+func newCompactProbeTestService(t *testing.T, account Account, upstream *httpUpstreamRecorder) (*AccountTestService, *compactProbeStateRepo, chan map[string]any) {
+	t.Helper()
+	updateCalls := make(chan map[string]any, 1)
+	repo := &compactProbeStateRepo{
+		snapshotUpdateAccountRepo: snapshotUpdateAccountRepo{
+			stubOpenAIAccountRepo: stubOpenAIAccountRepo{accounts: []Account{account}},
+			updateExtraCalls:      updateCalls,
+		},
+	}
+	svc := &AccountTestService{
+		accountRepo:  repo,
+		httpUpstream: upstream,
+		cfg:          &config.Config{Security: config.SecurityConfig{URLAllowlist: config.URLAllowlistConfig{Enabled: false}}},
+	}
+	return svc, repo, updateCalls
+}
+
+func newCompactProbeGinContext(t *testing.T, accountID int64) (*gin.Context, *httptest.ResponseRecorder) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/v1/admin/accounts/%d/test", accountID), bytes.NewReader(nil))
+	return c, rec
+}
 
 func TestAccountTestService_TestAccountConnection_OpenAICompactOAuthSuccessPersistsSupport(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -327,4 +367,158 @@ func TestCompactProbeSessionID_IsUUIDShaped(t *testing.T) {
 	}
 	require.Equal(t, compactProbeSessionID(7), compactProbeSessionID(7), "同账号应稳定复用同一会话")
 	require.NotEqual(t, compactProbeSessionID(7), compactProbeSessionID(8))
+}
+
+// 非官方 OpenAI 兼容上游不实现 Codex 的 compaction_trigger 扩展时，
+// 400/403/422 应报告“能力不支持”，而不是账号故障。
+func TestAccountTestService_OpenAICompact_NonOfficialUnsupportedStatusIsCapabilityGap(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cases := []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{"400", http.StatusBadRequest, `{"error":{"message":"compact is not supported by this upstream"}}`},
+		{"403", http.StatusForbidden, `{"error":{"message":"remote compaction unsupported"}}`},
+		{"422", http.StatusUnprocessableEntity, `{"error":{"message":"this provider does not support compact requests"}}`},
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			account := Account{
+				ID:          int64(20 + i),
+				Name:        "compat-apikey",
+				Platform:    PlatformOpenAI,
+				Type:        AccountTypeAPIKey,
+				Status:      StatusActive,
+				Schedulable: true,
+				Concurrency: 1,
+				Credentials: map[string]any{
+					"api_key":  "sk-test",
+					"base_url": "https://compat.example.com/v1",
+				},
+			}
+			upstream := &httpUpstreamRecorder{resp: &http.Response{
+				StatusCode: tc.status,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(tc.body)),
+			}}
+			svc, repo, updateCalls := newCompactProbeTestService(t, account, upstream)
+			c, rec := newCompactProbeGinContext(t, account.ID)
+
+			require.NoError(t, svc.TestAccountConnection(c, account.ID, "gpt-5.4", "", AccountTestModeCompact),
+				"能力不支持不应作为测试失败返回")
+
+			updates := <-updateCalls
+			require.Equal(t, false, updates["openai_compact_supported"])
+			require.Equal(t, tc.status, updates["openai_compact_last_status"])
+			require.Empty(t, repo.setErrorCalls, "能力不支持不得写入账号 error 状态")
+
+			sse := rec.Body.String()
+			require.Contains(t, sse, `"type":"test_unsupported"`)
+			require.NotContains(t, sse, `"type":"error"`)
+			require.Contains(t, sse, "Capability unsupported")
+		})
+	}
+}
+
+// 200 但没有 compaction output item 是“扩展被吞掉”的形态。非官方上游按能力
+// 不支持处理（能力标记仍为 false），官方上游仍保持现有失败诊断。
+func TestAccountTestService_OpenAICompact_NonOfficial2xxWithoutItemIsCapabilityGap(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	account := Account{
+		ID:          30,
+		Name:        "compat-apikey-no-item",
+		Platform:    PlatformOpenAI,
+		Type:        AccountTypeAPIKey,
+		Status:      StatusActive,
+		Schedulable: true,
+		Concurrency: 1,
+		Credentials: map[string]any{
+			"api_key":  "sk-test",
+			"base_url": "https://compat.example.com/v1",
+		},
+	}
+	noItemBody := "data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"message\",\"id\":\"msg_1\"}}\n\n" +
+		"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_x\",\"output\":[]}}\n\n"
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(noItemBody)),
+	}}
+	svc, repo, updateCalls := newCompactProbeTestService(t, account, upstream)
+	c, rec := newCompactProbeGinContext(t, account.ID)
+
+	require.NoError(t, svc.TestAccountConnection(c, account.ID, "gpt-5.4", "", AccountTestModeCompact))
+
+	updates := <-updateCalls
+	require.Equal(t, false, updates["openai_compact_supported"])
+	require.Equal(t, http.StatusOK, updates["openai_compact_last_status"])
+	require.Empty(t, repo.setErrorCalls)
+	require.Contains(t, rec.Body.String(), `"type":"test_unsupported"`)
+	require.NotContains(t, rec.Body.String(), `"type":"error"`)
+}
+
+// 官方 OpenAI 的鉴权/连接故障必须保持 failed，且 401 仍写入账号 error。
+func TestAccountTestService_OpenAICompact_OfficialFailuresRemainFailures(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	t.Run("network error", func(t *testing.T) {
+		account := Account{
+			ID:          40,
+			Name:        "official-apikey",
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 1,
+			Credentials: map[string]any{
+				"api_key":  "sk-test",
+				"base_url": "https://api.openai.com/v1",
+			},
+		}
+		upstream := &httpUpstreamRecorder{err: errors.New("dial tcp: i/o timeout")}
+		svc, repo, updateCalls := newCompactProbeTestService(t, account, upstream)
+		c, rec := newCompactProbeGinContext(t, account.ID)
+
+		require.Error(t, svc.TestAccountConnection(c, account.ID, "gpt-5.4", "", AccountTestModeCompact))
+		require.Empty(t, repo.setErrorCalls)
+
+		updates := <-updateCalls
+		require.NotContains(t, updates, "openai_compact_supported")
+		require.Contains(t, rec.Body.String(), `"type":"error"`)
+		require.NotContains(t, rec.Body.String(), `"type":"test_unsupported"`)
+	})
+
+	t.Run("401", func(t *testing.T) {
+		account := Account{
+			ID:          41,
+			Name:        "official-apikey-401",
+			Platform:    PlatformOpenAI,
+			Type:        AccountTypeAPIKey,
+			Status:      StatusActive,
+			Schedulable: true,
+			Concurrency: 1,
+			Credentials: map[string]any{
+				"api_key":  "sk-invalid",
+				"base_url": "https://api.openai.com/v1",
+			},
+		}
+		upstream := &httpUpstreamRecorder{resp: &http.Response{
+			StatusCode: http.StatusUnauthorized,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"invalid api key"}}`)),
+		}}
+		svc, repo, updateCalls := newCompactProbeTestService(t, account, upstream)
+		c, rec := newCompactProbeGinContext(t, account.ID)
+
+		require.Error(t, svc.TestAccountConnection(c, account.ID, "gpt-5.4", "", AccountTestModeCompact))
+		require.Len(t, repo.setErrorCalls, 1, "401 鉴权失败仍应写入账号 error")
+
+		updates := <-updateCalls
+		require.NotContains(t, updates, "openai_compact_supported")
+		require.Contains(t, rec.Body.String(), `"type":"error"`)
+		require.NotContains(t, rec.Body.String(), `"type":"test_unsupported"`)
+	})
 }
