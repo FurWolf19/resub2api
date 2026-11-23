@@ -11,6 +11,17 @@ export interface ReleaseInfo {
   html_url: string
 }
 
+export interface UpstreamInfo {
+  repository: string
+  latest_tag?: string
+  latest_version?: string
+  has_update: boolean
+  html_url?: string
+  published_at?: string
+  checked_at?: string
+  warning?: string
+}
+
 export interface VersionInfo {
   current_version: string
   latest_version: string
@@ -19,6 +30,9 @@ export interface VersionInfo {
   cached: boolean
   warning?: string
   build_type: string // "source" for manual builds, "release" for CI builds
+  repository?: string
+  own_release_available?: boolean
+  upstream?: UpstreamInfo
 }
 
 /**

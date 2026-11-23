@@ -101,6 +101,7 @@ func newSystemHandlerTestRouter(t *testing.T, updateSvc *systemHandlerUpdateServ
 	router.POST("/api/v1/admin/system/update", handler.PerformUpdate)
 	router.POST("/api/v1/admin/system/rollback", handler.Rollback)
 	router.GET("/api/v1/admin/system/rollback-versions", handler.GetRollbackVersions)
+	router.GET("/api/v1/admin/system/check-updates", handler.CheckUpdates)
 	return router
 }
 
@@ -115,6 +116,63 @@ func requireSystemLockStatus(t *testing.T, repo *memoryIdempotencyRepoStub, want
 		}
 	}
 	t.Fatalf("system lock status %q not found in records: %#v", wantStatus, repo.data)
+}
+
+func TestSystemHandlerCheckUpdatesExposesUpstream(t *testing.T) {
+	updateSvc := &systemHandlerUpdateServiceStub{
+		updateInfo: &service.UpdateInfo{
+			CurrentVersion:      "0.2.24",
+			LatestVersion:       "0.2.24",
+			HasUpdate:           false,
+			BuildType:           "source",
+			Repository:          service.ProjectRepository,
+			OwnReleaseAvailable: false,
+			Upstream: &service.UpstreamReleaseInfo{
+				Repository:    service.UpstreamRepository,
+				LatestTag:     "v0.2.25",
+				LatestVersion: "0.2.25",
+				HasUpdate:     true,
+				HTMLURL:       "https://github.com/Wei-Shaw/sub2api/releases/tag/v0.2.25",
+				CheckedAt:     "2026-11-24T00:00:00Z",
+			},
+		},
+	}
+	router := newSystemHandlerTestRouter(t, updateSvc, newMemoryIdempotencyRepoStub())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/system/check-updates?force=true", nil)
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, []bool{true}, updateSvc.checkForces)
+
+	var body struct {
+		Code int                `json:"code"`
+		Data service.UpdateInfo `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Equal(t, service.ProjectRepository, body.Data.Repository)
+	require.False(t, body.Data.OwnReleaseAvailable)
+	require.NotNil(t, body.Data.Upstream)
+	require.Equal(t, "0.2.25", body.Data.Upstream.LatestVersion)
+	require.True(t, body.Data.Upstream.HasUpdate)
+}
+
+func TestSystemHandlerPerformUpdateNoReleaseReturnsConflict(t *testing.T) {
+	updateSvc := &systemHandlerUpdateServiceStub{
+		performErr: service.ErrNoReleasePublished,
+	}
+	router := newSystemHandlerTestRouter(t, updateSvc, newMemoryIdempotencyRepoStub())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/admin/system/update", nil)
+	req.Header.Set("Idempotency-Key", "no-release")
+	router.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusConflict, rec.Code)
+	var body systemUpdateErrorEnvelope
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Equal(t, http.StatusConflict, body.Code)
 }
 
 func TestSystemHandlerPerformUpdateAlreadyUpToDateReturnsOK(t *testing.T) {

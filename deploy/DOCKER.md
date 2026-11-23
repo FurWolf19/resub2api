@@ -1,6 +1,6 @@
-# Sub2API Docker Image
+# ReSub2API Docker Image
 
-Sub2API is an AI API Gateway Platform for distributing and managing AI product subscription API quotas.
+ReSub2API is an AI API Gateway Platform for distributing and managing AI product subscription API quotas.
 
 ## Quick Start
 
@@ -10,7 +10,7 @@ docker run -d \
   -p 8080:8080 \
   -e DATABASE_URL="postgres://user:pass@host:5432/sub2api" \
   -e REDIS_URL="redis://host:6379" \
-  weishaw/sub2api:latest
+  njmlp/resub2api:v0.2.24
 ```
 
 ## Docker Compose
@@ -20,7 +20,7 @@ version: '3.8'
 
 services:
   sub2api:
-    image: weishaw/sub2api:latest
+    image: njmlp/resub2api:v0.2.24
     ports:
       - "8080:8080"
     environment:
@@ -51,7 +51,7 @@ volumes:
 
 ## Startup and Database Recovery
 
-Sub2API runs database migrations while starting. PostgreSQL may still be
+ReSub2API runs database migrations while starting. PostgreSQL may still be
 recovering briefly after a host or Docker daemon restart. The application
 retries transient PostgreSQL startup and connection errors with bounded
 exponential backoff, then continues startup when the database is ready.
@@ -77,14 +77,16 @@ Docker restores existing containers after a host restart.
 - `linux/amd64`
 - `linux/arm64`
 
+Check the published `njmlp/resub2api` manifest for the tag you deploy; the fork does not guarantee that every tag includes both architectures.
+
 ## Tags
 
-- `latest` - Latest stable release
-- `x.y.z` - Specific version
-- `x.y` - Latest patch of minor version
-- `x` - Latest minor of major version
+- `latest` - Latest stable fork image
+- `v0.2.24` - Specific fork version
+- `v0.2` - Latest patch of a minor version
+- `v0` - Latest minor of a major version
 
 ## Links
 
-- [GitHub Repository](https://github.com/weishaw/sub2api)
-- [Documentation](https://github.com/weishaw/sub2api#readme)
+- [GitHub Repository](https://github.com/FurWolf19/resub2api)
+- [Documentation](https://github.com/FurWolf19/resub2api#readme)

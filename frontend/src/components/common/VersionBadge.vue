@@ -8,9 +8,11 @@
         :class="[
           hasUpdate
             ? 'bg-amber-100 text-amber-700 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:hover:bg-amber-900/50'
-            : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-800 dark:text-dark-400 dark:hover:bg-dark-700'
+            : upstreamHasUpdate
+              ? 'bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:hover:bg-blue-900/50'
+              : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-800 dark:text-dark-400 dark:hover:bg-dark-700'
         ]"
-        :title="hasUpdate ? t('version.updateAvailable') : t('version.upToDate')"
+        :title="t(versionDisplay.badgeTitleKey)"
       >
         <span v-if="currentVersion" class="font-medium">v{{ currentVersion }}</span>
         <span
@@ -24,6 +26,11 @@
           ></span>
           <span class="relative inline-flex h-2 w-2 rounded-full bg-amber-500"></span>
         </span>
+        <span
+          v-else-if="upstreamHasUpdate"
+          class="h-2 w-2 rounded-full bg-blue-500"
+          aria-hidden="true"
+        ></span>
       </button>
 
       <!-- Dropdown -->
@@ -31,7 +38,7 @@
         <div
           v-if="dropdownOpen"
           ref="dropdownRef"
-          class="absolute left-0 z-50 mt-2 overflow-hidden whitespace-normal rounded-xl border border-gray-200 bg-white shadow-lg transition-all duration-200 dark:border-dark-700 dark:bg-dark-800"
+          class="absolute left-0 z-50 mt-2 max-w-[calc(100vw-2rem)] overflow-hidden whitespace-normal rounded-xl border border-gray-200 bg-white shadow-lg transition-all duration-200 dark:border-dark-700 dark:bg-dark-800"
           :class="rollbackPanelOpen && isReleaseBuild ? 'w-80' : 'w-64'"
         >
           <!-- Header with refresh button -->
@@ -87,9 +94,9 @@
                     >v{{ currentVersion }}</span
                   >
                   <span v-else class="text-2xl font-bold text-gray-400 dark:text-dark-500">--</span>
-                  <!-- Show check mark when up to date -->
+                  <!-- Show check mark only when this fork has a release and is current -->
                   <span
-                    v-if="!hasUpdate"
+                    v-if="versionDisplay.showUpToDateCheck"
                     class="flex h-5 w-5 items-center justify-center rounded-full bg-green-100 dark:bg-green-900/30"
                   >
                     <svg
@@ -109,9 +116,39 @@
                   {{
                     hasUpdate
                       ? t('version.latestVersion') + ': v' + latestVersion
-                      : t('version.upToDate')
+                      : forkReleaseMissing
+                        ? t('version.forkReleaseMissing')
+                        : upstreamHasUpdate && upstreamInfo?.latest_version
+                          ? t('version.upstreamAvailable', {
+                              version: upstreamInfo.latest_version
+                            })
+                          : t('version.upToDate')
                   }}
                 </p>
+              </div>
+
+              <!-- Upstream notice: informational only, never a one-click update -->
+              <div
+                v-if="versionDisplay.showUpstreamNotice && upstreamInfo"
+                class="mb-4 flex items-center justify-between gap-2 rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-2 dark:border-blue-800/50 dark:bg-blue-900/20"
+              >
+                <span class="flex min-w-0 items-center gap-1.5 text-xs text-blue-600 dark:text-blue-400">
+                  <Icon name="infoCircle" size="xs" :stroke-width="2" class="flex-shrink-0" />
+                  <span class="truncate">
+                    {{ t('version.upstreamRelease') }}
+                    <span class="font-medium">v{{ upstreamInfo.latest_version }}</span>
+                  </span>
+                </span>
+                <a
+                  v-if="upstreamInfo.html_url"
+                  :href="upstreamInfo.html_url"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="flex flex-shrink-0 items-center gap-1 text-xs text-blue-600 transition-colors hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+                >
+                  {{ upstreamInfo.has_update ? t('version.viewRelease') : t('version.viewChangelog') }}
+                  <Icon name="externalLink" size="xs" :stroke-width="2" />
+                </a>
               </div>
 
               <!-- Priority 1: Update error (must check before hasUpdate) -->
@@ -353,6 +390,32 @@
                   {{ t('version.viewChangelog') }}
                   <Icon name="externalLink" size="xs" :stroke-width="2" />
                 </a>
+              </div>
+
+              <!-- Fork has not published a release yet: never claim up to date -->
+              <div v-else-if="forkReleaseMissing" class="space-y-2">
+                <div
+                  class="flex items-start gap-3 rounded-lg border border-blue-200 bg-blue-50 p-3 dark:border-blue-800/50 dark:bg-blue-900/20"
+                >
+                  <div
+                    class="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-blue-100 dark:bg-blue-900/50"
+                  >
+                    <Icon
+                      name="infoCircle"
+                      size="sm"
+                      :stroke-width="2"
+                      class="text-blue-600 dark:text-blue-400"
+                    />
+                  </div>
+                  <div class="min-w-0 flex-1">
+                    <p class="text-sm font-medium text-blue-700 dark:text-blue-300">
+                      {{ t('version.forkReleaseMissing') }}
+                    </p>
+                    <p class="mt-0.5 text-xs leading-4 text-blue-600/80 dark:text-blue-400/80">
+                      {{ t('version.forkReleaseMissingHint') }}
+                    </p>
+                  </div>
+                </div>
               </div>
 
               <!-- Priority 5: Up to date - GitHub link + version rollback -->
@@ -650,10 +713,8 @@ import {
 } from '@/api/admin/system'
 import { useClipboard } from '@/composables/useClipboard'
 import Icon from '@/components/icons/Icon.vue'
-
-const GITHUB_REPO = 'Wei-Shaw/sub2api'
-// Docker Hub image published by CI (tags carry no "v" prefix, e.g. weishaw/sub2api:0.1.146)
-const DOCKER_IMAGE = 'weishaw/sub2api'
+import { resolveVersionDisplay } from '@/components/common/versionDisplay'
+import { PROJECT_DOCKER_IMAGE, PROJECT_REPO } from '@/constants/project'
 
 const { t } = useI18n()
 
@@ -676,6 +737,17 @@ const latestVersion = computed(() => appStore.latestVersion)
 const hasUpdate = computed(() => appStore.hasUpdate)
 const releaseInfo = computed(() => appStore.releaseInfo)
 const buildType = computed(() => appStore.buildType)
+const ownReleaseAvailable = computed(() => appStore.ownReleaseAvailable)
+const upstreamInfo = computed(() => appStore.upstream)
+const upstreamHasUpdate = computed(() => upstreamInfo.value?.has_update === true)
+const versionDisplay = computed(() =>
+  resolveVersionDisplay({
+    hasUpdate: hasUpdate.value,
+    ownReleaseAvailable: ownReleaseAvailable.value,
+    upstream: upstreamInfo.value
+  })
+)
+const forkReleaseMissing = computed(() => !ownReleaseAvailable.value)
 
 // Update process states (local to this component)
 const updating = ref(false)
@@ -710,14 +782,14 @@ const manualTabs = computed(() => [
 const scriptRollbackCommand = computed(() => {
   if (!selectedRollbackVersion.value) return ''
   const tag = `v${selectedRollbackVersion.value}`
-  return `curl -sSL https://raw.githubusercontent.com/${GITHUB_REPO}/${tag}/deploy/install.sh | sudo bash -s -- rollback ${tag}`
+  return `curl -sSL https://raw.githubusercontent.com/${PROJECT_REPO}/${tag}/deploy/install.sh | sudo bash -s -- rollback ${tag}`
 })
 
 const dockerRollbackCommand = computed(() => {
   if (!selectedRollbackVersion.value) return ''
   return [
     `# ${t('version.dockerEditCompose')}`,
-    `image: ${DOCKER_IMAGE}:${selectedRollbackVersion.value}`,
+    `image: ${PROJECT_DOCKER_IMAGE}:v${selectedRollbackVersion.value}`,
     '',
     `# ${t('version.dockerRecreate')}`,
     'docker compose up -d'
@@ -784,6 +856,7 @@ function resetRollbackState() {
 
 async function toggleRollbackPanel() {
   if (!isAdmin.value) return
+  if (!ownReleaseAvailable.value) return
   rollbackPanelOpen.value = !rollbackPanelOpen.value
   // Source builds only show a hint, no version list to fetch
   if (
@@ -798,6 +871,7 @@ async function toggleRollbackPanel() {
 
 async function loadRollbackVersions() {
   if (!isAdmin.value) return
+  if (!ownReleaseAvailable.value) return
   rollbackVersionsLoading.value = true
   rollbackVersionsError.value = ''
   try {

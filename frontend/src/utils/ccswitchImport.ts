@@ -120,7 +120,7 @@ model = ${JSON.stringify(config.model)}
 web_search = "live"
 
 [model_providers.sub2api]
-name = "Sub2API"
+name = "ReSub2API"
 base_url = ${JSON.stringify(config.endpoint)}
 wire_api = "responses"
 ${buildCodexApiKeyAuthConfig(input.apiKey)}

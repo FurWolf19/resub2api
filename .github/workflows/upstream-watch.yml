@@ -1,0 +1,123 @@
+name: Upstream Release Watch
+
+on:
+  schedule:
+    # Daily at 03:17 UTC. Avoids the top of the hour.
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: upstream-watch
+  cancel-in-progress: true
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout this repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Compare upstream release with fork VERSION
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UPSTREAM_REPO: Wei-Shaw/sub2api
+        run: |
+          set -euo pipefail
+
+          current="$(tr -d ' \r\n' < backend/cmd/server/VERSION)"
+          echo "Fork version: ${current}"
+
+          release_json="$(mktemp)"
+          if ! gh api "repos/${UPSTREAM_REPO}/releases/latest" > "${release_json}" 2>/dev/null; then
+            echo "No upstream latest release is available yet; nothing to do."
+            exit 0
+          fi
+
+          latest_tag="$(jq -r '.tag_name // empty' "${release_json}")"
+          latest="${latest_tag#v}"
+          html_url="$(jq -r '.html_url // empty' "${release_json}")"
+          published_at="$(jq -r '.published_at // empty' "${release_json}")"
+
+          if [ -z "${latest}" ]; then
+            echo "Upstream latest release has no tag; nothing to do."
+            exit 0
+          fi
+
+          # Only notify when upstream is strictly newer than the fork VERSION.
+          if [ "${current}" = "${latest}" ]; then
+            echo "Upstream is at ${latest}; fork is current."
+            exit 0
+          fi
+          newest="$(printf '%s\n%s\n' "${current}" "${latest}" | sort -V | tail -n 1)"
+          if [ "${newest}" != "${latest}" ]; then
+            echo "Upstream ${latest} is not newer than fork ${current}; nothing to do."
+            exit 0
+          fi
+
+          title="upstream: v${latest} released"
+          body_file="${RUNNER_TEMP}/upstream-issue.md"
+          notes_file="${RUNNER_TEMP}/upstream-notes.txt"
+          jq -r '.body // ""' "${release_json}" > "${notes_file}"
+
+          {
+            echo "Upstream **${UPSTREAM_REPO}** published [\`${latest_tag}\`](${html_url}) on ${published_at}."
+            echo
+            echo "Fork version: \`${current}\`"
+            echo
+            echo "This is a read-only notification. It does not update code, rebase, or push anything."
+            echo
+            echo "## Manual checklist"
+            echo
+            echo "- [ ] Read the upstream release notes"
+            echo "- [ ] Decide whether to rebase or merge \`upstream/main\`"
+            echo "- [ ] Run full CI on the \`resub\` branch"
+            echo "- [ ] Update \`backend/cmd/server/VERSION\` and the README baseline"
+            echo "- [ ] Never push to \`upstream\`"
+            echo
+            echo "## Upstream release notes"
+            echo
+            echo '```text'
+            head -c 8000 "${notes_file}"
+            echo
+            echo '```'
+          } > "${body_file}"
+
+          {
+            echo "### Upstream release ${latest_tag}"
+            echo
+            echo "- Fork version: \`${current}\`"
+            echo "- Upstream release: ${html_url}"
+            echo "- Published: ${published_at}"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+          if [ "$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.has_issues')" != "true" ]; then
+            echo "GitHub Issues are disabled for this repository; the upstream notice is only in this job summary." | tee -a "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+
+          existing="$(gh issue list \
+            --repo "${GITHUB_REPOSITORY}" \
+            --state open \
+            --limit 100 \
+            --json number,title | jq -r --arg title "${title}" '.[] | select(.title == $title) | .number' | sed -n '1p')"
+
+          if [ -n "${existing}" ]; then
+            if ! gh issue edit "${existing}" --body-file "${body_file}"; then
+              echo "Failed to update tracking issue ${existing}; see the job summary." >> "${GITHUB_STEP_SUMMARY}"
+              exit 1
+            fi
+            echo "Updated tracking issue #${existing}." >> "${GITHUB_STEP_SUMMARY}"
+          else
+            if ! gh issue create --title "${title}" --body-file "${body_file}"; then
+              echo "Failed to create the tracking issue; see the job summary." >> "${GITHUB_STEP_SUMMARY}"
+              exit 1
+            fi
+            echo "Created a new tracking issue." >> "${GITHUB_STEP_SUMMARY}"
+          fi
