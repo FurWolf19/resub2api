@@ -49,3 +49,47 @@ func TestUsageUnrestrictedIncludesWeeklyWindowStart(t *testing.T) {
 	require.NotNil(t, response.Subscription.WeeklyWindowStart)
 	require.True(t, weeklyWindowStart.Equal(*response.Subscription.WeeklyWindowStart))
 }
+
+func TestUsageUnrestrictedExpiredFiveHourWindowIsReportedAsZero(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/usage", nil)
+
+	start := time.Now().Add(-6 * time.Hour)
+	c.Set(string(middleware.ContextKeySubscription), &service.UserSubscription{
+		FiveHourWindowStart: &start,
+		FiveHourUsageUSD:    9,
+		QuotaMultiplier:     1,
+	})
+
+	limit := 10.0
+	handler := &GatewayHandler{}
+	handler.usageUnrestricted(
+		c,
+		context.Background(),
+		&service.APIKey{Group: &service.Group{
+			Name:             "5h plan",
+			SubscriptionType: service.SubscriptionTypeSubscription,
+			FiveHourLimitUSD: &limit,
+		}},
+		middleware.AuthSubject{},
+		nil,
+		nil,
+		nil,
+	)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var response struct {
+		Remaining    float64 `json:"remaining"`
+		Subscription struct {
+			FiveHourUsageUSD    float64    `json:"five_hour_usage_usd"`
+			FiveHourWindowStart *time.Time `json:"five_hour_window_start"`
+		} `json:"subscription"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+	require.Zero(t, response.Subscription.FiveHourUsageUSD)
+	require.Equal(t, 10.0, response.Remaining)
+	require.NotNil(t, response.Subscription.FiveHourWindowStart, "只读接口不得改写 window_start")
+	require.True(t, start.Equal(*response.Subscription.FiveHourWindowStart))
+}

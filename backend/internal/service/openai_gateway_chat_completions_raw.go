@@ -227,7 +227,7 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletionsWithStartTime(
 		respBody, upstreamMsg := s.readOpenAIUpstreamError(resp)
 		if len(allowProtocolFallback) > 0 && allowProtocolFallback[0] &&
 			s.shouldUseOpenAIProtocolFallback(c, account, openai_compat.ProtocolChatCompletions, resp.StatusCode, respBody) {
-			return nil, &openAIProtocolUnsupportedError{Protocol: openai_compat.ProtocolChatCompletions, StatusCode: resp.StatusCode}
+			return nil, &openAIProtocolUnsupportedError{Protocol: openai_compat.ProtocolChatCompletions, StatusCode: resp.StatusCode, CapabilityEvidence: openAIEndpointNotFoundJSON(resp.StatusCode, respBody)}
 		}
 		if account.Platform == PlatformGrok {
 			kind := "http_error"

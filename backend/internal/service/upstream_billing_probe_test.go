@@ -629,6 +629,38 @@ func TestUpstreamBillingProbeDiscardsResultWhenIdentityChangesInFlight(t *testin
 	require.NotContains(t, repo.accounts[account.ID].Extra, UpstreamBillingProbeExtraKey)
 }
 
+func TestUpstreamBillingProbeAcceptsSecondPeakWindow(t *testing.T) {
+	data, err := parseUpstreamBillingProbeResponse([]byte(`{
+		"object":"sub2api.key_billing",
+		"schema_version":1,
+		"billing_scope":"token",
+		"group_rate_multiplier":0.8,
+		"resolved_rate_multiplier":0.8,
+		"peak_rate_enabled":true,
+		"peak_start":"09:00",
+		"peak_end":"10:00",
+		"peak_rate_multiplier":1.5,
+		"peak_rate_windows":[
+			{"start":"09:00","end":"10:00","multiplier":1.5},
+			{"start":"15:00","end":"16:00","multiplier":3}
+		],
+		"applied_peak_multiplier":3,
+		"effective_rate_multiplier":2.4,
+		"timezone":"UTC",
+		"observed_at":"2026-07-13T15:30:00Z"
+	}`))
+
+	require.NoError(t, err)
+	require.Equal(t, 3.0, data["applied_peak_multiplier"])
+	windows, present, valid := upstreamBillingPeakWindowsFromData(data)
+	require.True(t, present)
+	require.True(t, valid)
+	require.Len(t, windows, 2)
+	rate, ok := upstreamBillingRateAt(data, time.Date(2026, time.July, 13, 15, 30, 0, 0, time.UTC))
+	require.True(t, ok)
+	require.InDelta(t, 2.4, rate, 1e-12)
+}
+
 func TestUpstreamBillingProbeRejectsInvalidPeakConfiguration(t *testing.T) {
 	tests := []struct {
 		name     string

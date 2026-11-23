@@ -133,6 +133,34 @@ func (s *UserSubscription) FiveHourResetTime() *time.Time {
 	return &t
 }
 
+// EffectiveFiveHourUsageAt 返回展示/校验口径下的 5h 用量。
+// 已过期的窗口视为 0，但不修改 window_start，也不触发任何数据库写入：
+// 5h 窗口只有下一笔 cost>0 消费才会重新开启。
+func (s *UserSubscription) EffectiveFiveHourUsageAt(now time.Time) float64 {
+	if s == nil {
+		return 0
+	}
+	if s.FiveHourWindowExpiredAt(now) {
+		return 0
+	}
+	return s.FiveHourUsageUSD
+}
+
+// EffectiveFiveHourResetTimeAt 返回展示口径下的 5h 重置时间。
+// 窗口已过期时返回 now（客户端可立即使用下一次消费开启新窗口），
+// 窗口未开启时返回 nil；该函数同样只做只读计算。
+func (s *UserSubscription) EffectiveFiveHourResetTimeAt(now time.Time) *time.Time {
+	if s == nil || s.FiveHourWindowStart == nil {
+		return nil
+	}
+	if s.FiveHourWindowExpiredAt(now) {
+		t := now
+		return &t
+	}
+	t := s.FiveHourWindowStart.Add(subscriptionFiveHourWindow)
+	return &t
+}
+
 // QuotaMultiplierOrDefault 返回订阅额度倍率。0 是合法倍率，不能被当作缺省值；
 // 只有字段完全未加载（nil 接收者）时才回退到 1.0。
 func (s *UserSubscription) QuotaMultiplierOrDefault() float64 {
@@ -278,9 +306,10 @@ func (s *UserSubscription) CheckFiveHourLimit(group *Group, additionalCost float
 	return s.FiveHourUsageUSD+additionalCost <= s.EffectiveLimit(group.FiveHourLimitUSD)
 }
 
-func (s *UserSubscription) CheckAllLimits(group *Group, additionalCost float64) (daily, weekly, monthly bool) {
+func (s *UserSubscription) CheckAllLimits(group *Group, additionalCost float64) (daily, weekly, monthly, fiveHour bool) {
 	daily = s.CheckDailyLimit(group, additionalCost)
 	weekly = s.CheckWeeklyLimit(group, additionalCost)
 	monthly = s.CheckMonthlyLimit(group, additionalCost)
+	fiveHour = s.CheckFiveHourLimit(group, additionalCost)
 	return
 }

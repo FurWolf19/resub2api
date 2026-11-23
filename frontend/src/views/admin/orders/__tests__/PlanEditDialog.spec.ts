@@ -194,3 +194,29 @@ describe('PlanEditDialog', () => {
     expect(options).not.toContain('Standard OpenAI — openai (1x)')
   })
 })
+
+describe('PlanEditDialog group quota limits', () => {
+  it('treats zero and negative limits as unlimited while keeping positive limits', async () => {
+    const wrapper = mountDialog({
+      groups: [
+        groupFixture({
+          id: 7,
+          five_hour_limit_usd: 0,
+          daily_limit_usd: -1,
+          weekly_limit_usd: 5,
+          monthly_limit_usd: null,
+        }),
+      ],
+    })
+
+    await wrapper.get('select').setValue('7')
+
+    const text = wrapper.text()
+    expect(text).toContain('payment.admin.fiveHourLimit: payment.admin.unlimited')
+    expect(text).toContain('payment.admin.dailyLimit: payment.admin.unlimited')
+    expect(text).toContain('payment.admin.weeklyLimit: $5')
+    expect(text).toContain('payment.admin.monthlyLimit: payment.admin.unlimited')
+    expect(text).not.toContain('$0')
+    expect(text).not.toContain('$-1')
+  })
+})

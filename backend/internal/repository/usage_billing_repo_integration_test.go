@@ -130,6 +130,51 @@ func TestUsageBillingRepositoryApply_DeduplicatesSubscriptionBilling(t *testing.
 	require.InDelta(t, 2.5, dailyUsage, 0.000001)
 }
 
+func TestUsageBillingRepositoryApply_NegativeSubscriptionCostReversesUsage(t *testing.T) {
+	ctx := context.Background()
+	client := testEntClient(t)
+	repo := NewUsageBillingRepository(client, integrationDB)
+
+	user := mustCreateUser(t, client, &service.User{
+		Email:        fmt.Sprintf("usage-billing-reversal-user-%d@example.com", time.Now().UnixNano()),
+		PasswordHash: "hash",
+	})
+	group := mustCreateGroup(t, client, &service.Group{
+		Name:             "usage-billing-reversal-group-" + uuid.NewString(),
+		Platform:         service.PlatformAnthropic,
+		SubscriptionType: service.SubscriptionTypeSubscription,
+	})
+	apiKey := mustCreateApiKey(t, client, &service.APIKey{
+		UserID:  user.ID,
+		GroupID: &group.ID,
+		Key:     "sk-usage-billing-reversal-" + uuid.NewString(),
+		Name:    "billing-reversal",
+	})
+	subscription := mustCreateSubscription(t, client, &service.UserSubscription{
+		UserID:  user.ID,
+		GroupID: group.ID,
+	})
+
+	for _, cost := range []float64{5, -10} {
+		_, err := repo.Apply(ctx, &service.UsageBillingCommand{
+			RequestID:        uuid.NewString(),
+			APIKeyID:         apiKey.ID,
+			UserID:           user.ID,
+			SubscriptionID:   &subscription.ID,
+			SubscriptionCost: cost,
+		})
+		require.NoError(t, err)
+	}
+
+	var dailyUsage, fiveHourUsage float64
+	require.NoError(t, integrationDB.QueryRowContext(ctx,
+		"SELECT daily_usage_usd, five_hour_usage_usd FROM user_subscriptions WHERE id = $1",
+		subscription.ID,
+	).Scan(&dailyUsage, &fiveHourUsage))
+	require.InDelta(t, -5, dailyUsage, 0.000001, "日/周/月保持原有加法语义，负数应冲正")
+	require.Equal(t, 0.0, fiveHourUsage, "5h 冲正后不得为负")
+}
+
 func TestUsageBillingRepositoryApply_RequestFingerprintConflict(t *testing.T) {
 	ctx := context.Background()
 	client := testEntClient(t)

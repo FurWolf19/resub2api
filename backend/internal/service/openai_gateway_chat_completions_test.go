@@ -419,7 +419,7 @@ func TestForwardAsChatCompletions_StructuredInputRejectionDoesNotRetryIneligible
 			c, _ := gin.CreateTestContext(rec)
 			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
 			account := structuredInputRetryTestAccount()
-			account.Extra = map[string]any{openai_compat.ExtraKeyResponsesSupported: true, openai_compat.ExtraKeyResponsesMode: test.mode}
+			account.Extra = responsesOnlyProtocolExtra(test.mode)
 			if test.unknown {
 				// auto 模式不再把未知默认成 Responses；用“Responses 已知支持、
 				// Chat 已知不支持”表达同一测试场景（首次仍走 Responses）。
@@ -493,7 +493,7 @@ func TestForwardAsChatCompletions_StructuredInputRetryPreservesStreamingAndMappi
 			c, _ := gin.CreateTestContext(rec)
 			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
 			account := structuredInputRetryTestAccount()
-			account.Extra = map[string]any{openai_compat.ExtraKeyResponsesSupported: true, openai_compat.ExtraKeyResponsesMode: "auto"}
+			account.Extra = responsesOnlyProtocolExtra("auto")
 			mappedModel := "gpt-5.4"
 			if useAccountMapping {
 				account.Credentials["model_mapping"] = map[string]any{"client-model": mappedModel}
@@ -540,7 +540,7 @@ func TestForwardAsChatCompletions_StructuredInputRetryIsBoundedAndPreservesRawEr
 			}
 			body := []byte(`{"model":"gpt-5.4","messages":[{"role":"user","content":"hello"}],"stream":false}`)
 			account := structuredInputRetryTestAccount()
-			account.Extra = map[string]any{openai_compat.ExtraKeyResponsesSupported: true}
+			account.Extra = responsesOnlyProtocolExtra("")
 			forward := func(retry bool) (*httptest.ResponseRecorder, error) {
 				rec := httptest.NewRecorder()
 				c, _ := gin.CreateTestContext(rec)
@@ -589,8 +589,24 @@ func structuredInputRetryTestAccount() *Account {
 		Type:        AccountTypeAPIKey,
 		Concurrency: 1,
 		Credentials: map[string]any{"api_key": "sk-test", "base_url": "http://upstream.example"},
-		Extra:       map[string]any{openai_compat.ExtraKeyResponsesSupported: true},
+		Extra:       responsesOnlyProtocolExtra(""),
 	}
+}
+
+// responsesOnlyProtocolExtra 表示“仅支持 Responses”的 auto 账号：Chat 显式
+// 不支持，Chat 入站才会走 Responses 转换链（未知不再默认升级）。
+func responsesOnlyProtocolExtra(mode string) map[string]any {
+	extra := map[string]any{
+		openai_compat.ExtraKeyResponsesSupported: true,
+		openai_compat.ExtraKeyProtocolCapabilities: map[string]any{
+			openai_compat.ProtocolResponses:       map[string]any{"supported": true},
+			openai_compat.ProtocolChatCompletions: map[string]any{"supported": false},
+		},
+	}
+	if mode != "" {
+		extra[openai_compat.ExtraKeyResponsesMode] = mode
+	}
+	return extra
 }
 
 type openAIChatStreamReadErrorCloser struct {
@@ -791,6 +807,10 @@ func TestForwardAsChatCompletions_APIKeyPropagatesPromptCacheKeyInResponsesBody(
 		},
 		Extra: map[string]any{
 			"openai_responses_supported": true,
+			openai_compat.ExtraKeyProtocolCapabilities: map[string]any{
+				openai_compat.ProtocolResponses:       map[string]any{"supported": true},
+				openai_compat.ProtocolChatCompletions: map[string]any{"supported": false},
+			},
 		},
 	}
 
@@ -819,7 +839,7 @@ func TestForwardAsChatCompletions_APIKeyAutoDerivesStableIsolatedPromptCacheKey(
 	account := &Account{
 		ID: 2, Name: "openai-compatible", Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Concurrency: 1,
 		Credentials: map[string]any{"api_key": "sk-compatible"},
-		Extra:       map[string]any{"openai_responses_supported": true},
+		Extra:       responsesOnlyProtocolExtra(""),
 	}
 	firstBody := []byte(`{"model":"gpt-5.4","messages":[{"role":"system","content":"be concise"},{"role":"user","content":"hello"}],"stream":false}`)
 	appendedBody := []byte(`{"model":"gpt-5.4","messages":[{"role":"system","content":"be concise"},{"role":"user","content":"hello"},{"role":"assistant","content":"hi"},{"role":"user","content":"continue"}],"stream":false}`)
@@ -866,7 +886,7 @@ func TestForwardAsChatCompletions_ResponsesShapeDoesNotAutoDerivePromptCacheKey(
 	account := &Account{
 		ID: 2, Name: "openai-compatible", Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Concurrency: 1,
 		Credentials: map[string]any{"api_key": "sk-compatible"},
-		Extra:       map[string]any{"openai_responses_supported": true},
+		Extra:       responsesOnlyProtocolExtra(""),
 	}
 	firstBody := []byte(`{"model":"gpt-5.4","input":[{"role":"user","content":[{"type":"input_text","text":"first unrelated input"}]}],"stream":false}`)
 	secondBody := []byte(`{"model":"gpt-5.4","input":[{"role":"user","content":[{"type":"input_text","text":"second unrelated input"}]}],"stream":false}`)

@@ -382,6 +382,9 @@ func TestAccountTestService_OpenAICompact_NonOfficialUnsupportedStatusIsCapabili
 		{"400", http.StatusBadRequest, `{"error":{"message":"compact is not supported by this upstream"}}`},
 		{"403", http.StatusForbidden, `{"error":{"message":"remote compaction unsupported"}}`},
 		{"422", http.StatusUnprocessableEntity, `{"error":{"message":"this provider does not support compact requests"}}`},
+		{"404", http.StatusNotFound, `404 page not found`},
+		{"405", http.StatusMethodNotAllowed, `method not allowed`},
+		{"501", http.StatusNotImplemented, `not implemented`},
 	}
 	for i, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -418,6 +421,51 @@ func TestAccountTestService_OpenAICompact_NonOfficialUnsupportedStatusIsCapabili
 			require.Contains(t, sse, `"type":"test_unsupported"`)
 			require.NotContains(t, sse, `"type":"error"`)
 			require.Contains(t, sse, "Capability unsupported")
+		})
+	}
+}
+
+// 404 若明确是探测模型不可用，不能当成 compact 能力缺失；官方 404 仍保持
+// 原有失败诊断。
+func TestAccountTestService_OpenAICompact_404ModelUnavailableAndOfficialStayFailures(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	cases := []struct {
+		name   string
+		status int
+		base   string
+		body   string
+	}{
+		{"custom 404 model unavailable", http.StatusNotFound, "https://compat.example.com/v1", `{"error":{"code":"model_not_found"}}`},
+		{"official 404", http.StatusNotFound, "https://api.openai.com/v1", `404 page not found`},
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			account := Account{
+				ID:          int64(50 + i),
+				Name:        "compact-failure",
+				Platform:    PlatformOpenAI,
+				Type:        AccountTypeAPIKey,
+				Status:      StatusActive,
+				Schedulable: true,
+				Concurrency: 1,
+				Credentials: map[string]any{
+					"api_key":  "sk-test",
+					"base_url": tc.base,
+				},
+			}
+			upstream := &httpUpstreamRecorder{resp: &http.Response{
+				StatusCode: tc.status,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(tc.body)),
+			}}
+			svc, repo, _ := newCompactProbeTestService(t, account, upstream)
+			c, rec := newCompactProbeGinContext(t, account.ID)
+
+			require.Error(t, svc.TestAccountConnection(c, account.ID, "gpt-5.4", "", AccountTestModeCompact))
+			require.Empty(t, repo.setErrorCalls)
+			require.Contains(t, rec.Body.String(), `"type":"error"`)
+			require.NotContains(t, rec.Body.String(), `"type":"test_unsupported"`)
 		})
 	}
 }

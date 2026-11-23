@@ -122,6 +122,14 @@ func shouldReportOpenAICompactCapabilityUnsupported(status int, body []byte, com
 	switch status {
 	case http.StatusBadRequest, http.StatusForbidden, http.StatusUnprocessableEntity:
 		return shouldMarkOpenAICompactUnsupported(status, body)
+	case http.StatusNotFound, http.StatusMethodNotAllowed, http.StatusNotImplemented:
+		// 404 也可能是“探测模型不可用”，此时不能把账号判成不支持 compact。
+		if isResponsesProbeModelUnavailable(status, body) {
+			return false
+		}
+		// 自定义兼容上游通常没有 /responses 或 compaction_trigger 扩展，
+		// 404/405/501 是能力缺失而非账号故障。
+		return true
 	default:
 		return false
 	}
@@ -187,7 +195,9 @@ func buildOpenAICompactProbeExtraUpdates(resp *http.Response, body []byte, probe
 			updates["openai_compact_supported"] = false
 			updates["openai_compact_last_error"] = "upstream returned 2xx without a compaction output item (native remote compaction v2 unsupported)"
 		default:
-			if shouldMarkOpenAICompactUnsupported(resp.StatusCode, body) {
+			// model_not_found 之类 404 只说明探测模型不可用，不代表 compact
+			// 端点缺失；写 false 会永久关掉该账号的 compact，必须排除。
+			if !isResponsesProbeModelUnavailable(resp.StatusCode, body) && shouldMarkOpenAICompactUnsupported(resp.StatusCode, body) {
 				updates["openai_compact_supported"] = false
 			}
 			updates["openai_compact_last_error"] = errMsg

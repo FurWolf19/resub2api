@@ -22,6 +22,8 @@ const i18n = createI18n({
           quota: "Quota",
           rate: "Rate",
           unlimited: "Unlimited",
+          fiveHourLimit: "5-hour limit",
+          dailyLimit: "Daily limit",
         },
         subscribeNow: "Subscribe now",
       },
@@ -147,5 +149,33 @@ describe("SubscriptionPlanCard", () => {
       "justify-end",
     ]));
     expect(badge?.element.parentElement?.textContent).toContain("/ 30days");
+  });
+});
+
+describe("SubscriptionPlanCard quota limits", () => {
+  it("hides a zero five-hour limit and shows unlimited when all limits are zero", () => {
+    const text = mountPlanCard("openai", {
+      five_hour_limit_usd: 0,
+      daily_limit_usd: 0,
+      weekly_limit_usd: 0,
+      monthly_limit_usd: 0,
+    }).text();
+
+    expect(text).toContain("Unlimited");
+    expect(text).not.toContain("5-hour limit");
+    expect(text).not.toContain("$0");
+  });
+
+  it("keeps positive daily limits while hiding a zero five-hour limit", () => {
+    const text = mountPlanCard("openai", {
+      five_hour_limit_usd: 0,
+      daily_limit_usd: 10,
+      weekly_limit_usd: null,
+      monthly_limit_usd: null,
+    }).text();
+
+    expect(text).toContain("$10");
+    expect(text).not.toContain("5-hour limit");
+    expect(text).not.toContain("Unlimited");
   });
 });

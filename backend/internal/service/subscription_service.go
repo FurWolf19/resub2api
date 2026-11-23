@@ -251,7 +251,7 @@ func (s *SubscriptionService) assignOrExtendSubscription(ctx context.Context, in
 
 	// 已有订阅，执行续期（在事务中完成所有更新）
 	if existingSub != nil {
-		if err := s.updateExistingSubscriptionTerm(ctx, existingSub.ID, validityDays, input.Notes, false); err != nil {
+		if err := s.updateExistingSubscriptionTerm(ctx, existingSub.ID, validityDays, input.Notes, false, input.QuotaMultiplier); err != nil {
 			return nil, false, err
 		}
 
@@ -299,6 +299,7 @@ func (s *SubscriptionService) updateExistingSubscriptionTerm(
 	validityDays int,
 	notes string,
 	assignmentSemantics bool,
+	quotaMultiplier *float64,
 ) error {
 	return s.withSubscriptionUpdateTx(ctx, func(txCtx context.Context) error {
 		existingSub, err := s.userSubRepo.GetByIDForUpdate(txCtx, subscriptionID)
@@ -307,6 +308,18 @@ func (s *SubscriptionService) updateExistingSubscriptionTerm(
 		}
 		if assignmentSemantics && existingSub.Status == SubscriptionStatusSuspended {
 			return nil
+		}
+
+		// 只有管理员显式传入倍率时才覆盖；支付/兑换/普通续费传入 nil 时保留原倍率。
+		applyQuotaMultiplier := func() error {
+			if quotaMultiplier == nil {
+				return nil
+			}
+			repo, ok := s.quotaRepository()
+			if !ok {
+				return fmt.Errorf("subscription quota repository is not available")
+			}
+			return repo.SetSubscriptionQuotaMultiplier(txCtx, existingSub.ID, roundQuotaMultiplier(*quotaMultiplier))
 		}
 
 		now := time.Now()
@@ -334,7 +347,7 @@ func (s *SubscriptionService) updateExistingSubscriptionTerm(
 			if err := s.userSubRepo.Update(txCtx, renewed); err != nil {
 				return fmt.Errorf("renew expired subscription: %w", err)
 			}
-			return nil
+			return applyQuotaMultiplier()
 		}
 
 		// 更新过期时间
@@ -356,7 +369,7 @@ func (s *SubscriptionService) updateExistingSubscriptionTerm(
 			}
 		}
 
-		return nil
+		return applyQuotaMultiplier()
 	})
 }
 
@@ -439,7 +452,7 @@ func (s *SubscriptionService) createSubscription(ctx context.Context, input *Ass
 	}
 	quotaMultiplier := 1.0
 	if input.QuotaMultiplier != nil {
-		quotaMultiplier = *input.QuotaMultiplier
+		quotaMultiplier = roundQuotaMultiplier(*input.QuotaMultiplier)
 	}
 
 	now := time.Now()
@@ -558,7 +571,7 @@ func (s *SubscriptionService) assignSubscriptionWithReuse(ctx context.Context, i
 		if sub.Status == SubscriptionStatusExpired ||
 			(sub.Status != SubscriptionStatusSuspended && !sub.ExpiresAt.After(now)) {
 			validityDays := normalizeAssignValidityDays(input.ValidityDays)
-			if err := s.updateExistingSubscriptionTerm(ctx, sub.ID, validityDays, input.Notes, true); err != nil {
+			if err := s.updateExistingSubscriptionTerm(ctx, sub.ID, validityDays, input.Notes, true, input.QuotaMultiplier); err != nil {
 				return nil, false, err
 			}
 			s.maybeInvalidateAssignmentCaches(input.UserID, input.GroupID, false)
@@ -575,7 +588,7 @@ func (s *SubscriptionService) assignSubscriptionWithReuse(ctx context.Context, i
 			if err := s.UpdateQuotaMultiplier(ctx, sub.ID, *input.QuotaMultiplier); err != nil {
 				return nil, false, err
 			}
-			sub.QuotaMultiplier = *input.QuotaMultiplier
+			sub.QuotaMultiplier = roundQuotaMultiplier(*input.QuotaMultiplier)
 		}
 		return sub, true, nil
 	}
@@ -942,17 +955,23 @@ func (s *SubscriptionService) AdminResetQuotaWithFiveHour(ctx context.Context, s
 		return nil, err
 	}
 	now := s.now()
+	// 日/周/月与 5h 的清理放在同一事务中，避免部分窗口已重置、部分失败。
 	// 日窗口锚点取当天 0 点：手动重置只清空用量，不改变“每天 0 点刷新”的节奏。
 	// 周/月窗口保持锚定重置时刻（期限对齐滚动窗口语义）。
-	if resetDaily || resetWeekly || resetMonthly {
-		if err := s.userSubRepo.ResetUsageWindows(ctx, sub.ID, resetDaily, resetWeekly, resetMonthly, timezone.StartOfDay(now), now); err != nil {
-			return nil, err
+	if err := s.withSubscriptionUpdateTx(ctx, func(txCtx context.Context) error {
+		if resetDaily || resetWeekly || resetMonthly {
+			if err := s.userSubRepo.ResetUsageWindows(txCtx, sub.ID, resetDaily, resetWeekly, resetMonthly, timezone.StartOfDay(now), now); err != nil {
+				return err
+			}
 		}
-	}
-	if resetFiveHour {
-		if err := s.resetFiveHourUsage(ctx, sub.ID, sub.FiveHourWindowStart); err != nil {
-			return nil, err
+		if resetFiveHour {
+			if err := s.resetFiveHourUsage(txCtx, sub.ID, sub.FiveHourWindowStart); err != nil {
+				return err
+			}
 		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 	// Invalidate L1 ristretto cache. Ristretto's Del() is asynchronous by design,
 	// so call Wait() immediately after to flush pending operations and guarantee
@@ -960,6 +979,7 @@ func (s *SubscriptionService) AdminResetQuotaWithFiveHour(ctx context.Context, s
 	s.InvalidateSubCacheSync(sub.UserID, sub.GroupID)
 	if s.billingCacheService != nil {
 		_ = s.billingCacheService.InvalidateSubscription(ctx, sub.UserID, sub.GroupID)
+		_ = s.billingCacheService.PublishSubscriptionCacheInvalidation(ctx, subCacheKey(sub.UserID, sub.GroupID))
 	}
 	// Return the refreshed subscription from DB
 	return s.userSubRepo.GetByID(ctx, subscriptionID)
@@ -1305,21 +1325,34 @@ func (s *SubscriptionService) calculateProgress(sub *UserSubscription, group *Gr
 		}
 	}
 
-	// 5h 进度
-	if group.HasFiveHourLimit() && sub.FiveHourWindowStart != nil {
+	// 5h 进度。窗口未开启（首次消费前或刚重置）时仍返回进度块：
+	// used=0、remaining=有效限额，resets_in_seconds=0；该计算只读，不写库。
+	if group.HasFiveHourLimit() {
+		now := time.Now()
+		if s.now != nil {
+			now = s.now()
+		}
 		limit := sub.EffectiveLimit(group.FiveHourLimitUSD)
-		resetsAt := sub.FiveHourWindowStart.Add(subscriptionFiveHourWindow)
-		if fiveHourResetTime := sub.FiveHourResetTime(); fiveHourResetTime != nil {
-			resetsAt = *fiveHourResetTime
+		used := float64(0)
+		resetsAt := now
+		if sub.FiveHourWindowStart != nil {
+			used = sub.EffectiveFiveHourUsageAt(now)
+			resetsAt = sub.FiveHourWindowStart.Add(subscriptionFiveHourWindow)
+			if resetTime := sub.EffectiveFiveHourResetTimeAt(now); resetTime != nil {
+				resetsAt = *resetTime
+			}
 		}
 		progress.FiveHour = &UsageWindowProgress{
 			LimitUSD:        limit,
-			UsedUSD:         sub.FiveHourUsageUSD,
-			RemainingUSD:    limit - sub.FiveHourUsageUSD,
-			Percentage:      usagePercentage(sub.FiveHourUsageUSD, limit),
-			WindowStart:     *sub.FiveHourWindowStart,
+			UsedUSD:         used,
+			RemainingUSD:    limit - used,
+			Percentage:      usagePercentage(used, limit),
+			WindowStart:     now,
 			ResetsAt:        resetsAt,
 			ResetsInSeconds: int64(time.Until(resetsAt).Seconds()),
+		}
+		if sub.FiveHourWindowStart != nil {
+			progress.FiveHour.WindowStart = *sub.FiveHourWindowStart
 		}
 		if progress.FiveHour.RemainingUSD < 0 {
 			progress.FiveHour.RemainingUSD = 0

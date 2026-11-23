@@ -172,7 +172,8 @@ func (r *usageBillingRepository) applyBatchImageBalanceHold(
 }
 
 func (r *usageBillingRepository) applyUsageBillingEffects(ctx context.Context, tx *sql.Tx, cmd *service.UsageBillingCommand, result *service.UsageBillingApplyResult) error {
-	if cmd.SubscriptionCost > 0 && cmd.SubscriptionID != nil {
+	// 允许负额进入订阅用量累加，用于退款/冲正；5h 窗口在 SQL 内用 GREATEST 保证不降到 0 以下。
+	if cmd.SubscriptionCost != 0 && cmd.SubscriptionID != nil {
 		if err := incrementUsageBillingSubscription(ctx, tx, *cmd.SubscriptionID, cmd.SubscriptionCost); err != nil {
 			return err
 		}
@@ -221,6 +222,21 @@ func incrementUsageBillingSubscription(ctx context.Context, tx *sql.Tx, subscrip
 			daily_usage_usd = us.daily_usage_usd + $1,
 			weekly_usage_usd = us.weekly_usage_usd + $1,
 			monthly_usage_usd = us.monthly_usage_usd + $1,
+			five_hour_window_start = CASE
+				WHEN $1 <= 0 THEN us.five_hour_window_start
+				WHEN us.five_hour_window_start IS NULL
+					OR us.five_hour_window_start <= NOW() - INTERVAL '5 hours'
+				THEN NOW()
+				ELSE us.five_hour_window_start
+			END,
+			five_hour_usage_usd = CASE
+				WHEN $1 < 0 THEN GREATEST(us.five_hour_usage_usd + $1, 0)
+				WHEN $1 = 0 THEN us.five_hour_usage_usd
+				WHEN us.five_hour_window_start IS NULL
+					OR us.five_hour_window_start <= NOW() - INTERVAL '5 hours'
+				THEN $1
+				ELSE us.five_hour_usage_usd + $1
+			END,
 			updated_at = NOW()
 		FROM groups g
 		WHERE us.id = $2

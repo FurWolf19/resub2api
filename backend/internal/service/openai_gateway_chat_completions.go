@@ -177,7 +177,12 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 	case APIProtocolChatCompletions:
 		SetActualOpenAIUpstreamEndpoint(c, "/v1/chat/completions")
 		rawBody := body
-		if convertResponsesShape {
+		// Cursor 兼容：Responses 形状请求体发到 /v1/chat/completions 时，只要
+		// 最终上游选择 Chat Completions 就必须转成 messages 形状——无论账号是
+		// auto、adaptive/routesByModel 还是 force_chat_completions，否则只支持
+		// CC 的上游只看到 input 字段并返回 400。普通 CC body 没有 input，不会
+		// 进入该分支，也不存在重复转换。
+		if isResponsesShape {
 			converted, convErr := s.convertResponsesShapedChatBody(body)
 			if convErr != nil {
 				return nil, convErr
@@ -186,13 +191,27 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 		}
 		result, rawErr := s.forwardAsRawChatCompletions(ctx, c, account, rawBody, defaultMappedModel, true)
 		if unsupported, ok := asOpenAIProtocolUnsupportedError(rawErr); ok {
-			account = s.recordOpenAIProtocolCapability(ctx, account, unsupported.Protocol, false)
+			if unsupported.CapabilityEvidence {
+				account = s.recordOpenAIProtocolCapability(ctx, account, unsupported.Protocol, false)
+			}
 			markOpenAIProtocolFallbackTried(c)
+			// 回退重试必须使用原始请求体：上一轮可能已经做了 Responses 形状转换，
+			// 重试到 Responses 上游时应保留客户端原始语义。
 			retryResult, retryErr := s.forwardAsChatCompletions(ctx, c, account, body, promptCacheKey, defaultMappedModel, compatPromptCacheTenantIsolated)
 			if retryErr == nil {
-				s.recordOpenAIProtocolCapability(ctx, account, openai_compat.ProtocolResponses, true)
+				// 重试实际可能仍走 Chat（两协议都明确不支持时 ChooseProtocol 会
+				// 跟随入站），也可能切到 Responses。按实际命中的上游端点记录，
+				// 不能无条件写 Responses=true，否则瞬时 404 后的成功会污染能力。
+				if protocol := openAIProtocolFromUpstreamEndpoint(firstNonEmpty(
+					openAIForwardResultEndpoint(retryResult),
+					GetActualOpenAIUpstreamEndpoint(c),
+				)); protocol != "" {
+					s.recordOpenAIProtocolCapability(ctx, account, protocol, true)
+				}
+				return retryResult, nil
 			}
-			return retryResult, retryErr
+			// 两种协议都失败时合并首个“协议不支持”错误，保留原始 404/405。
+			return nil, errors.Join(rawErr, retryErr)
 		}
 		return result, rawErr
 	}
@@ -447,7 +466,9 @@ func (s *OpenAIGatewayService) forwardAsChatCompletions(
 				zap.Int("upstream_status", resp.StatusCode),
 				zap.String("upstream_message", upstreamMsg),
 			)
-			account = s.recordOpenAIProtocolCapability(ctx, account, openai_compat.ProtocolResponses, false)
+			if openAIEndpointNotFoundJSON(resp.StatusCode, respBody) {
+				account = s.recordOpenAIProtocolCapability(ctx, account, openai_compat.ProtocolResponses, false)
+			}
 			markOpenAIProtocolFallbackTried(c)
 			if isResponsesShape {
 				SetActualOpenAIUpstreamEndpoint(c, "/v1/chat/completions")

@@ -190,71 +190,66 @@
               >
                 <div
                   v-if="
-                    row.daily_limit_usd ||
-                    row.weekly_limit_usd ||
-                    row.monthly_limit_usd ||
-                    row.five_hour_limit_usd
+                    hasPositiveLimit(row.daily_limit_usd) ||
+                    hasPositiveLimit(row.weekly_limit_usd) ||
+                    hasPositiveLimit(row.monthly_limit_usd) ||
+                    hasPositiveLimit(row.five_hour_limit_usd)
                   "
                   class="flex flex-wrap items-center gap-x-1 gap-y-0.5"
                 >
-                  <span v-if="row.five_hour_limit_usd" class="whitespace-nowrap">
+                  <span
+                    v-if="hasPositiveLimit(row.five_hour_limit_usd)"
+                    class="whitespace-nowrap"
+                  >
                     {{ formatUsd(row.five_hour_limit_usd) }}/{{
                       t("admin.groups.limit5h")
                     }}
                   </span>
                   <span
                     v-if="
-                      row.five_hour_limit_usd &&
-                      (row.daily_limit_usd ||
-                        row.weekly_limit_usd ||
-                        row.monthly_limit_usd)
+                      hasPositiveLimit(row.five_hour_limit_usd) &&
+                      (hasPositiveLimit(row.daily_limit_usd) ||
+                        hasPositiveLimit(row.weekly_limit_usd) ||
+                        hasPositiveLimit(row.monthly_limit_usd))
                     "
                     class="mx-1 text-gray-300 dark:text-gray-600"
                     >·</span
                   >
-                  <span v-if="row.daily_limit_usd" class="whitespace-nowrap">
-                    <span
-                      v-if="usageLoading"
-                      class="font-medium text-gray-400 dark:text-gray-500"
-                      >—</span
-                    >
-                    <span
-                      v-else
-                      :class="
-                        getQuotaUsageClass(
-                          usageMap.get(row.id)?.today_cost ?? 0,
-                          row.daily_limit_usd
-                        )
-                      "
-                      >{{
-                        formatUsd(usageMap.get(row.id)?.today_cost ?? 0)
-                      }}</span
-                    >
-                    <span class="text-gray-400 dark:text-gray-500">
-                      / {{ formatUsd(row.daily_limit_usd) }}/{{
-                        t("admin.groups.limitDay")
-                      }}</span
-                    >
+                  <span
+                    v-if="hasPositiveLimit(row.daily_limit_usd)"
+                    class="whitespace-nowrap"
+                  >
+                    {{ formatUsd(row.daily_limit_usd) }}/{{
+                      t("admin.groups.limitDay")
+                    }}
                   </span>
                   <span
                     v-if="
-                      row.daily_limit_usd &&
-                      (row.weekly_limit_usd || row.monthly_limit_usd)
+                      hasPositiveLimit(row.daily_limit_usd) &&
+                      (hasPositiveLimit(row.weekly_limit_usd) ||
+                        hasPositiveLimit(row.monthly_limit_usd))
                     "
                     class="mx-1 text-gray-300 dark:text-gray-600"
                     >·</span
                   >
-                  <span v-if="row.weekly_limit_usd" class="whitespace-nowrap"
+                  <span
+                    v-if="hasPositiveLimit(row.weekly_limit_usd)"
+                    class="whitespace-nowrap"
                     >{{ formatUsd(row.weekly_limit_usd) }}/{{
                       t("admin.groups.limitWeek")
                     }}</span
                   >
                   <span
-                    v-if="row.weekly_limit_usd && row.monthly_limit_usd"
+                    v-if="
+                      hasPositiveLimit(row.weekly_limit_usd) &&
+                      hasPositiveLimit(row.monthly_limit_usd)
+                    "
                     class="mx-1 text-gray-300 dark:text-gray-600"
                     >·</span
                   >
-                  <span v-if="row.monthly_limit_usd" class="whitespace-nowrap"
+                  <span
+                    v-if="hasPositiveLimit(row.monthly_limit_usd)"
+                    class="whitespace-nowrap"
                     >{{ formatUsd(row.monthly_limit_usd) }}/{{
                       t("admin.groups.limitMonth")
                     }}</span
@@ -263,15 +258,16 @@
                 <span v-else class="text-gray-400 dark:text-gray-500">{{
                   t("admin.groups.subscription.noLimit")
                 }}</span>
-                <div class="text-gray-400 dark:text-gray-500">
-                  {{ t("admin.groups.usageTotal") }}
-                  <span class="ml-1 font-medium text-gray-600 dark:text-gray-300"
-                    >{{
-                      usageLoading
-                        ? "—"
-                        : formatUsd(usageMap.get(row.id)?.total_cost ?? 0)
-                    }}</span
-                  >
+                <div
+                  v-if="
+                    hasPositiveLimit(row.five_hour_limit_usd) ||
+                    hasPositiveLimit(row.daily_limit_usd) ||
+                    hasPositiveLimit(row.weekly_limit_usd) ||
+                    hasPositiveLimit(row.monthly_limit_usd)
+                  "
+                  class="text-gray-400 dark:text-gray-500"
+                >
+                  {{ t("admin.groups.subscription.baseLimitHint") }}
                 </div>
               </div>
             </div>
@@ -742,6 +738,9 @@
             v-if="createForm.subscription_type === 'subscription'"
             class="space-y-4 border-l-2 border-primary-200 pl-4 dark:border-primary-800"
           >
+            <p class="input-hint">
+              {{ t("admin.groups.subscription.baseLimitHint") }}
+            </p>
             <div>
               <label class="input-label">{{
                 t("admin.groups.subscription.fiveHourLimit")
@@ -1223,7 +1222,6 @@
                 v-model="createForm.peak_rate_enabled"
                 type="checkbox"
                 class="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                @change="ensureCreatePeakRateWindow"
               />
               <span>{{ t("admin.groups.peakRate.enable") }}</span>
             </label>
@@ -2397,6 +2395,9 @@
             v-if="editForm.subscription_type === 'subscription'"
             class="space-y-4 border-l-2 border-primary-200 pl-4 dark:border-primary-800"
           >
+            <p class="input-hint">
+              {{ t("admin.groups.subscription.baseLimitHint") }}
+            </p>
             <div>
               <label class="input-label">{{
                 t("admin.groups.subscription.fiveHourLimit")
@@ -2878,7 +2879,6 @@
                 v-model="editForm.peak_rate_enabled"
                 type="checkbox"
                 class="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                @change="ensureEditPeakRateWindow"
               />
               <span>{{ t("admin.groups.peakRate.enable") }}</span>
             </label>
@@ -4354,12 +4354,14 @@ import ReasoningEffortPolicyFields from "@/components/admin/group/ReasoningEffor
 import CodexManifestAccountsField from "@/components/admin/group/CodexManifestAccountsField.vue";
 import PeakRateWindowsEditor from "@/components/admin/group/PeakRateWindowsEditor.vue";
 import {
+  buildPeakRateSubmitFields,
   createPeakRateWindowFormEntry,
-  peakRateFormEntriesToPayload,
   peakRateWindowsToFormEntries,
+  pruneIncompletePeakRateWindows,
   type PeakRateWindowFormEntry,
 } from "@/components/admin/group/peakRateForm";
 import { serverTimezoneLabel } from "@/utils/peak-rate";
+import { hasPositiveLimit } from "@/utils/subscriptionQuota";
 import PricingEntryCard from "@/components/admin/channel/PricingEntryCard.vue";
 import type { PricingFormEntry } from "@/components/admin/channel/types";
 import {
@@ -4625,7 +4627,7 @@ const saveColumnsToStorage = () => {
 
 const isColumnVisible = (key: string) => !hiddenColumns.has(key);
 const hasVisibleUsageSummaryConsumer = computed(
-  () => !authStore.isSimpleMode && (isColumnVisible("usage") || isColumnVisible("billing_type")),
+  () => !authStore.isSimpleMode && isColumnVisible("usage"),
 );
 const hasVisibleCapacityColumn = computed(() => !authStore.isSimpleMode && isColumnVisible("capacity"));
 
@@ -4641,7 +4643,7 @@ const toggleColumn = (key: string) => {
   }
   saveColumnsToStorage();
 
-  if (wasHidden && (key === "usage" || key === "billing_type")) {
+  if (wasHidden && key === "usage") {
     loadUsageSummary();
   }
   if (wasHidden && key === "capacity") {
@@ -5468,6 +5470,33 @@ const editForm = reactive({
   reasoning_effort_mappings: [] as ReasoningEffortMappingRow[],
 });
 
+// 关闭高峰开关时移除未填完的窗口，但保留完整窗口作为草稿；重新开启且为空时补一条空白窗口。
+watch(
+  () => createForm.peak_rate_enabled,
+  (enabled) => {
+    if (enabled) {
+      ensureCreatePeakRateWindow();
+    } else {
+      createForm.peak_rate_windows = pruneIncompletePeakRateWindows(
+        createForm.peak_rate_windows,
+      );
+    }
+  },
+);
+
+watch(
+  () => editForm.peak_rate_enabled,
+  (enabled) => {
+    if (enabled) {
+      ensureEditPeakRateWindow();
+    } else {
+      editForm.peak_rate_windows = pruneIncompletePeakRateWindows(
+        editForm.peak_rate_windows,
+      );
+    }
+  },
+);
+
 type ImagePricingFormState = {
   platform: GroupPlatform;
   allow_image_generation: boolean;
@@ -5754,23 +5783,6 @@ const formatCost = (cost: number): string => {
 
 const formatUsd = (cost: number | null | undefined): string =>
   `$${formatCost(cost ?? 0)}`;
-
-const getQuotaUsageClass = (
-  used: number,
-  limit: number | null | undefined,
-): string => {
-  if (!limit || limit <= 0) {
-    return "font-medium text-gray-700 dark:text-gray-300";
-  }
-  const ratio = used / limit;
-  if (ratio >= 1) {
-    return "font-semibold text-red-600 dark:text-red-400";
-  }
-  if (ratio >= 0.8) {
-    return "font-semibold text-amber-600 dark:text-amber-400";
-  }
-  return "font-medium text-gray-700 dark:text-gray-300";
-};
 
 const loadUsageSummary = async () => {
   if (!hasVisibleUsageSummaryConsumer.value) {
@@ -6141,15 +6153,17 @@ const handleCreateGroup = async () => {
       requestData.web_search_price_per_call,
     );
     requestData.peak_rate_enabled = createForm.peak_rate_enabled;
-    const peakRateWindows = peakRateFormEntriesToPayload(
+    const peakRateFields = buildPeakRateSubmitFields(
       createForm.peak_rate_windows,
+      createForm.peak_rate_enabled,
     );
-    (requestData as Record<string, unknown>).peak_rate_windows = peakRateWindows;
-    // 旧字段继续同步第一个窗口（后端以数组为准；旧客户端/降级读取仍可用）。
-    requestData.peak_start = peakRateWindows[0]?.start ?? createForm.peak_start;
-    requestData.peak_end = peakRateWindows[0]?.end ?? createForm.peak_end;
+    (requestData as Record<string, unknown>).peak_rate_windows =
+      peakRateFields.peak_rate_windows;
+    // 旧字段继续同步第一个有效窗口（后端以数组为准；旧客户端/降级读取仍可用）。
+    requestData.peak_start = peakRateFields.peak_start;
+    requestData.peak_end = peakRateFields.peak_end;
     requestData.peak_rate_multiplier = normalizeRateMultiplier(
-      peakRateWindows[0]?.multiplier ?? createForm.peak_rate_multiplier,
+      peakRateFields.peak_rate_multiplier,
     );
     const payload = authStore.isSimpleMode
       ? {
@@ -6534,15 +6548,17 @@ const handleUpdateGroup = async () => {
       payload.web_search_price_per_call,
     );
     payload.peak_rate_enabled = editForm.peak_rate_enabled;
-    const peakRateWindows = peakRateFormEntriesToPayload(
+    const peakRateFields = buildPeakRateSubmitFields(
       editForm.peak_rate_windows,
+      editForm.peak_rate_enabled,
     );
-    (payload as Record<string, unknown>).peak_rate_windows = peakRateWindows;
-    // 旧字段继续同步第一个窗口（后端以数组为准；旧客户端/降级读取仍可用）。
-    payload.peak_start = peakRateWindows[0]?.start ?? editForm.peak_start;
-    payload.peak_end = peakRateWindows[0]?.end ?? editForm.peak_end;
+    (payload as Record<string, unknown>).peak_rate_windows =
+      peakRateFields.peak_rate_windows;
+    // 旧字段继续同步第一个有效窗口（后端以数组为准；旧客户端/降级读取仍可用）。
+    payload.peak_start = peakRateFields.peak_start;
+    payload.peak_end = peakRateFields.peak_end;
     payload.peak_rate_multiplier = normalizeRateMultiplier(
-      peakRateWindows[0]?.multiplier ?? editForm.peak_rate_multiplier,
+      peakRateFields.peak_rate_multiplier,
     );
     const requestData = authStore.isSimpleMode
       ? {

@@ -44,6 +44,8 @@ func TestResolveUpstreamProtocolAutoFollowsInbound(t *testing.T) {
 	}{
 		{"responses inbound with only cc", autoBoolPtr(false), autoBoolPtr(true), APIProtocolResponses, APIProtocolChatCompletions},
 		{"cc inbound with only responses", autoBoolPtr(true), autoBoolPtr(false), APIProtocolChatCompletions, APIProtocolResponses},
+		{"responses inbound unknown with cc supported stays responses", nil, autoBoolPtr(true), APIProtocolResponses, APIProtocolResponses},
+		{"cc inbound unknown with responses supported stays cc", autoBoolPtr(true), nil, APIProtocolChatCompletions, APIProtocolChatCompletions},
 		{"both supported responses inbound", autoBoolPtr(true), autoBoolPtr(true), APIProtocolResponses, APIProtocolResponses},
 		{"both supported cc inbound", autoBoolPtr(true), autoBoolPtr(true), APIProtocolChatCompletions, APIProtocolChatCompletions},
 		{"unknown responses inbound stays responses", nil, nil, APIProtocolResponses, APIProtocolResponses},
@@ -93,12 +95,15 @@ func TestResolveUpstreamProtocolLegacyProbeKey(t *testing.T) {
 	}
 	require.Equal(t, APIProtocolChatCompletions, resolveUpstreamProtocol(legacyUnsupported, APIProtocolResponses, "", nil))
 
+	// Legacy true 只说明 Responses 可用；Chat 入站仍跟随入站（未知/推断支持均
+	// 不等于明确不支持），不再静默升级到 Responses。
 	legacySupported := &Account{
 		Platform: PlatformOpenAI, Type: AccountTypeAPIKey,
 		Credentials: map[string]any{"api_key": "sk-test"},
 		Extra:       map[string]any{openai_compat.ExtraKeyResponsesSupported: true},
 	}
-	require.Equal(t, APIProtocolResponses, resolveUpstreamProtocol(legacySupported, APIProtocolChatCompletions, "", nil))
+	require.Equal(t, APIProtocolChatCompletions, resolveUpstreamProtocol(legacySupported, APIProtocolChatCompletions, "", nil))
+	require.Equal(t, APIProtocolResponses, resolveUpstreamProtocol(legacySupported, APIProtocolResponses, "", nil))
 }
 
 func TestOpenAIProtocolRequiresResponsesForSolTerraTools(t *testing.T) {

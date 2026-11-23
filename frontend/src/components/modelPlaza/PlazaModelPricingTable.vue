@@ -375,7 +375,6 @@ const props = defineProps<{
    * 与高峰重叠的部分实付还会再乘高峰倍率。
    */
   peakWindow?: string
-  peakRateMultiplier?: number | null
 }>()
 
 const { t } = useI18n()

@@ -453,3 +453,69 @@ func TestReleaseUsageBillingBatchImageBalance_SkipsWhenHoldNeverReserved(t *test
 	require.NoError(t, tx.Commit())
 	require.NoError(t, mock.ExpectationsWereMet())
 }
+
+func TestIncrementUsageBillingSubscription_UpdatesAllWindowsIncludingFiveHour(t *testing.T) {
+	ctx := context.Background()
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	mock.ExpectBegin()
+	tx, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	mock.ExpectExec(`(?s)UPDATE user_subscriptions us\s+SET\s+daily_usage_usd = us.daily_usage_usd \+ \$1,\s+weekly_usage_usd = us.weekly_usage_usd \+ \$1,\s+monthly_usage_usd = us.monthly_usage_usd \+ \$1,\s+five_hour_window_start = CASE.*five_hour_usage_usd = CASE.*WHERE us.id = \$2`).
+		WithArgs(1.25, int64(9)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	err = incrementUsageBillingSubscription(ctx, tx, 9, 1.25)
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit())
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestApplyUsageBillingEffects_NegativeSubscriptionCostReversesUsage(t *testing.T) {
+	ctx := context.Background()
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	mock.ExpectBegin()
+	tx, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	// 负额必须进入订阅用量 SQL；5h 用 GREATEST 保证不会降到 0 以下，
+	// 日/周/月保持原有加法语义（负数即冲正）。
+	mock.ExpectExec(`(?s)UPDATE user_subscriptions us\s+SET\s+daily_usage_usd = us.daily_usage_usd \+ \$1,\s+weekly_usage_usd = us.weekly_usage_usd \+ \$1,\s+monthly_usage_usd = us.monthly_usage_usd \+ \$1,\s+five_hour_window_start = CASE.*five_hour_usage_usd = CASE.*GREATEST\(us.five_hour_usage_usd \+ \$1, 0\).*WHERE us.id = \$2`).
+		WithArgs(-1.5, int64(9)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	subscriptionID := int64(9)
+	err = (&usageBillingRepository{}).applyUsageBillingEffects(ctx, tx, &service.UsageBillingCommand{
+		SubscriptionID:   &subscriptionID,
+		SubscriptionCost: -1.5,
+	}, &service.UsageBillingApplyResult{Applied: true})
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit())
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestIncrementUsageBillingSubscription_ReturnsNotFoundWhenNoRowUpdated(t *testing.T) {
+	ctx := context.Background()
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+
+	mock.ExpectBegin()
+	tx, err := db.BeginTx(ctx, nil)
+	require.NoError(t, err)
+	mock.ExpectExec(`(?s)UPDATE user_subscriptions us.*five_hour_usage_usd = CASE.*WHERE us.id = \$2`).
+		WithArgs(2.0, int64(404)).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectRollback()
+
+	err = incrementUsageBillingSubscription(ctx, tx, 404, 2)
+	require.ErrorIs(t, err, service.ErrSubscriptionNotFound)
+	require.NoError(t, tx.Rollback())
+	require.NoError(t, mock.ExpectationsWereMet())
+}

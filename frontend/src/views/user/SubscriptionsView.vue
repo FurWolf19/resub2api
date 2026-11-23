@@ -101,11 +101,13 @@
             </div>
 
             <!-- Five-hour Usage -->
-            <div v-if="subscription.group?.five_hour_limit_usd" class="space-y-2">
+            <div v-if="subscription.group && hasPositiveLimit(subscription.group.five_hour_limit_usd)" class="space-y-2">
               <div class="flex items-center justify-between">
-                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
-                  {{ t('userSubscriptions.fiveHour') }}
-                </span>
+                <div class="flex items-center gap-2">
+                  <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ t('userSubscriptions.fiveHour') }}
+                  </span>
+                </div>
                 <span class="text-sm text-gray-500 dark:text-dark-400">
                   ${{ (subscription.five_hour_usage_usd || 0).toFixed(2) }} / ${{
                     effectiveLimit(subscription, subscription.group.five_hour_limit_usd).toFixed(2)
@@ -142,11 +144,13 @@
             </div>
 
             <!-- Daily Usage -->
-            <div v-if="subscription.group?.daily_limit_usd" class="space-y-2">
+            <div v-if="subscription.group && hasPositiveLimit(subscription.group.daily_limit_usd)" class="space-y-2">
               <div class="flex items-center justify-between">
-                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
-                  {{ t('userSubscriptions.daily') }}
-                </span>
+                <div class="flex items-center gap-2">
+                  <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ t('userSubscriptions.daily') }}
+                  </span>
+                </div>
                 <span class="text-sm text-gray-500 dark:text-dark-400">
                   ${{ (subscription.daily_usage_usd || 0).toFixed(2) }} / ${{
                     effectiveLimit(subscription, subscription.group.daily_limit_usd).toFixed(2)
@@ -179,11 +183,13 @@
             </div>
 
             <!-- Weekly Usage -->
-            <div v-if="subscription.group?.weekly_limit_usd" class="space-y-2">
+            <div v-if="subscription.group && hasPositiveLimit(subscription.group.weekly_limit_usd)" class="space-y-2">
               <div class="flex items-center justify-between">
-                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
-                  {{ t('userSubscriptions.weekly') }}
-                </span>
+                <div class="flex items-center gap-2">
+                  <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ t('userSubscriptions.weekly') }}
+                  </span>
+                </div>
                 <span class="text-sm text-gray-500 dark:text-dark-400">
                   ${{ (subscription.weekly_usage_usd || 0).toFixed(2) }} / ${{
                     effectiveLimit(subscription, subscription.group.weekly_limit_usd).toFixed(2)
@@ -220,11 +226,13 @@
             </div>
 
             <!-- Monthly Usage -->
-            <div v-if="subscription.group?.monthly_limit_usd" class="space-y-2">
+            <div v-if="subscription.group && hasPositiveLimit(subscription.group.monthly_limit_usd)" class="space-y-2">
               <div class="flex items-center justify-between">
-                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
-                  {{ t('userSubscriptions.monthly') }}
-                </span>
+                <div class="flex items-center gap-2">
+                  <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ t('userSubscriptions.monthly') }}
+                  </span>
+                </div>
                 <span class="text-sm text-gray-500 dark:text-dark-400">
                   ${{ (subscription.monthly_usage_usd || 0).toFixed(2) }} / ${{
                     effectiveLimit(subscription, subscription.group.monthly_limit_usd).toFixed(2)
@@ -263,10 +271,10 @@
             <!-- No limits configured - Unlimited badge -->
             <div
               v-if="
-                !subscription.group?.daily_limit_usd &&
-                !subscription.group?.weekly_limit_usd &&
-                !subscription.group?.monthly_limit_usd &&
-                !subscription.group?.five_hour_limit_usd
+                !hasPositiveLimit(subscription.group?.daily_limit_usd) &&
+                !hasPositiveLimit(subscription.group?.weekly_limit_usd) &&
+                !hasPositiveLimit(subscription.group?.monthly_limit_usd) &&
+                !hasPositiveLimit(subscription.group?.five_hour_limit_usd)
               "
               class="flex items-center justify-center rounded-xl bg-gradient-to-r from-emerald-50 to-teal-50 py-6 dark:from-emerald-900/20 dark:to-teal-900/20"
             >
@@ -304,6 +312,7 @@ import { platformBorderClass, platformBadgeClass, platformButtonClass, platformL
 import {
   getExpirationDateRelation,
   getRemainingDurationParts,
+  hasPositiveLimit,
   isOneTimeDailyQuota,
   type RemainingDurationParts
 } from '@/utils/subscriptionQuota'

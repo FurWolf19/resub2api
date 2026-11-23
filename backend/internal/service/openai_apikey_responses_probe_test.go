@@ -226,8 +226,12 @@ func TestDecideChatCompletionsProbeSupport(t *testing.T) {
 		conclusive bool
 	}{
 		{name: "200", status: http.StatusOK, body: `{}`, supported: true, conclusive: true},
-		{name: "404 endpoint absent", status: http.StatusNotFound, body: `{"error":{"message":"not found"}}`, conclusive: true},
-		{name: "405 endpoint absent", status: http.StatusMethodNotAllowed, conclusive: true},
+		{name: "404 endpoint absent json", status: http.StatusNotFound, body: `{"error":{"message":"not found"}}`, conclusive: true},
+		{name: "404 html unknown", status: http.StatusNotFound, body: `<html>not found</html>`, conclusive: false},
+		{name: "404 empty body unknown", status: http.StatusNotFound, conclusive: false},
+		{name: "404 plain text unknown", status: http.StatusNotFound, body: "404 page not found", conclusive: false},
+		{name: "405 endpoint absent json", status: http.StatusMethodNotAllowed, body: `{"error":{"message":"method not allowed"}}`, conclusive: true},
+		{name: "405 empty body unknown", status: http.StatusMethodNotAllowed, conclusive: false},
 		{name: "401 unknown", status: http.StatusUnauthorized, conclusive: false},
 		{name: "model not found unknown", status: http.StatusNotFound, body: `{"error":{"code":"model_not_found"}}`, conclusive: false},
 		{name: "400 conservative supported", status: http.StatusBadRequest, body: `{}`, supported: true, conclusive: true},

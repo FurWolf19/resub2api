@@ -105,7 +105,8 @@ func selectResponsesProbeModel(account *Account) string {
 // OpenAIGatewayService.ensureOpenAIProtocolCapabilities）。
 //
 // Responses 探测策略（参见包文档 internal/pkg/openai_compat）：
-//   - 上游 404 / 405 → 端点不存在,写 false
+//   - 上游 404 / 405：只有可识别的 JSON endpoint-not-found 写 false；HTML/空体/
+//     纯文本/未知 JSON 保持 unknown，避免反向代理错误页污染能力结论
 //   - 上游 2xx → 端点存在,进一步看工具能力:响应含 function_call 输出项才写 true;
 //     仅 reasoning / 无 function_call(如火山方舟 coding/v3 × kimi-k2.6)写 false
 //   - 其他非 2xx（401/422/400/5xx 等）→ 端点存在但无法判定工具能力,保守写 true
@@ -154,6 +155,9 @@ func (s *AccountTestService) ProbeOpenAIAPIKeyResponsesSupport(ctx context.Conte
 		return
 	}
 
+	// 显式测试账号是管理员主动操作：绕过后台负缓存，保证每次都能拿到真实结论。
+	clearOpenAIProtocolProbeBackoff(account.ID)
+
 	result := probeOpenAIProtocolCapabilities(ctx, openAIProtocolProbeDeps{
 		accountRepo:         s.accountRepo,
 		httpUpstream:        s.httpUpstream,
@@ -196,11 +200,15 @@ func (s *AccountTestService) ProbeOpenAIAPIKeyResponsesSupport(ctx context.Conte
 // coding/v3 × kimi-k2.6），仍按原逻辑判为不支持。
 //
 // 明确指向探测模型不可用的 400/404(model_not_found 等)只说明模型不存在,不说明端点
-// 能力,不下结论;其余非 2xx 的结论只看状态码、不依赖响应内容，恒可下结论。
-// 缺少 status 字段的响应体（含非 JSON）也按可下结论处理，保持既有行为。
+// 能力,不下结论;404/405 只有在响应是可识别的 JSON endpoint-not-found 时才下结论,
+// HTML/空体/纯文本/未知 JSON 一律无法判定;其余非 2xx 的结论只看状态码、不依赖响应
+// 内容，恒可下结论。缺少 status 字段的响应体（含非 JSON）也按可下结论处理，保持既有行为。
 func responsesProbeVerdictIsConclusive(status int, body []byte) bool {
 	if isResponsesProbeModelUnavailable(status, body) {
 		return false
+	}
+	if status == http.StatusNotFound || status == http.StatusMethodNotAllowed {
+		return openAIEndpointNotFoundJSON(status, body)
 	}
 	if status < 200 || status >= 300 {
 		return true

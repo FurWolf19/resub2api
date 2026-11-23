@@ -17,6 +17,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 )
 
@@ -115,27 +116,28 @@ var duplicateAccountDiscardedExtraKeys = map[string]struct{}{
 	"quota_daily_reset_at":  {},
 	"quota_weekly_reset_at": {},
 	// Provider observations, capability probes, and transient scheduling state.
-	"model_rate_limits":                      {},
-	"session_window_utilization":             {},
-	"passive_usage_7d_utilization":           {},
-	"passive_usage_7d_reset":                 {},
-	"passive_usage_7d_oi_utilization":        {},
-	"passive_usage_7d_oi_reset":              {},
-	"passive_usage_sampled_at":               {},
-	"grok_usage_snapshot":                    {},
-	"grok_billing_snapshot":                  {},
-	"openai_responses_supported":             {},
-	"openai_compact_supported":               {},
-	"openai_compact_checked_at":              {},
-	"openai_compact_last_status":             {},
-	"openai_compact_last_error":              {},
-	"antigravity_credits_overages":           {},
-	"antigravity_force_token_refresh":        {},
-	"antigravity_force_token_refresh_at":     {},
-	"antigravity_force_token_refresh_reason": {},
-	"drive_storage_limit":                    {},
-	"drive_storage_usage":                    {},
-	"drive_tier_updated_at":                  {},
+	"model_rate_limits":                        {},
+	"session_window_utilization":               {},
+	"passive_usage_7d_utilization":             {},
+	"passive_usage_7d_reset":                   {},
+	"passive_usage_7d_oi_utilization":          {},
+	"passive_usage_7d_oi_reset":                {},
+	"passive_usage_sampled_at":                 {},
+	"grok_usage_snapshot":                      {},
+	"grok_billing_snapshot":                    {},
+	"openai_responses_supported":               {},
+	openai_compat.ExtraKeyProtocolCapabilities: {},
+	"openai_compact_supported":                 {},
+	"openai_compact_checked_at":                {},
+	"openai_compact_last_status":               {},
+	"openai_compact_last_error":                {},
+	"antigravity_credits_overages":             {},
+	"antigravity_force_token_refresh":          {},
+	"antigravity_force_token_refresh_at":       {},
+	"antigravity_force_token_refresh_reason":   {},
+	"drive_storage_limit":                      {},
+	"drive_storage_usage":                      {},
+	"drive_tier_updated_at":                    {},
 	// Codex fingerprint convergence uses a per-account random seed, never copied from another account.
 	codexFingerprintSeedExtraKey:           {},
 	"codex_primary_used_percent":           {},

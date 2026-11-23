@@ -57,6 +57,29 @@ func TestBuildOpenAICompactProbeExtraUpdates_404MarksUnsupported(t *testing.T) {
 	}
 }
 
+func TestBuildOpenAICompactProbeExtraUpdates_ModelNotFound404DoesNotMarkUnsupported(t *testing.T) {
+	now := time.Date(2026, 4, 10, 10, 0, 0, 0, time.UTC)
+	body := []byte(`{"error":{"code":"model_not_found","message":"The model gpt-5.5-openai-compact does not exist"}}`)
+	updates := buildOpenAICompactProbeExtraUpdates(&http.Response{StatusCode: http.StatusNotFound}, body, nil, false, now)
+
+	if _, exists := updates["openai_compact_supported"]; exists {
+		t.Fatalf("did not expect openai_compact_supported for model_not_found 404")
+	}
+	if got := updates["openai_compact_last_status"]; got != http.StatusNotFound {
+		t.Fatalf("openai_compact_last_status = %v, want %d", got, http.StatusNotFound)
+	}
+}
+
+func TestBuildOpenAICompactProbeExtraUpdates_EndpointMissingStatusesMarkUnsupported(t *testing.T) {
+	now := time.Date(2026, 4, 10, 10, 0, 0, 0, time.UTC)
+	for _, status := range []int{http.StatusNotFound, http.StatusMethodNotAllowed, http.StatusNotImplemented} {
+		updates := buildOpenAICompactProbeExtraUpdates(&http.Response{StatusCode: status}, nil, nil, false, now)
+		if got := updates["openai_compact_supported"]; got != false {
+			t.Fatalf("status %d: openai_compact_supported = %v, want false", status, got)
+		}
+	}
+}
+
 func TestBuildOpenAICompactProbeExtraUpdates_502DoesNotMarkUnsupported(t *testing.T) {
 	now := time.Date(2026, 4, 10, 10, 0, 0, 0, time.UTC)
 	updates := buildOpenAICompactProbeExtraUpdates(&http.Response{StatusCode: http.StatusBadGateway}, []byte(`Upstream request failed`), nil, false, now)
@@ -215,7 +238,11 @@ func TestShouldReportOpenAICompactCapabilityUnsupported(t *testing.T) {
 		{name: "custom 403 explicit unsupported", status: http.StatusForbidden, body: unsupportedBody, official: false, known: true, wantUnsupported: true},
 		{name: "custom 422 explicit unsupported", status: http.StatusUnprocessableEntity, body: unsupportedBody, official: false, known: true, wantUnsupported: true},
 		{name: "custom 403 generic forbidden stays failure", status: http.StatusForbidden, body: []byte(`{"error":{"message":"forbidden"}}`), official: false, known: true, wantUnsupported: false},
-		{name: "custom 404 stays failure", status: http.StatusNotFound, body: []byte(`404 page not found`), official: false, known: true, wantUnsupported: false},
+		{name: "custom 404 capability unsupported", status: http.StatusNotFound, body: []byte(`404 page not found`), official: false, known: true, wantUnsupported: true},
+		{name: "custom 405 capability unsupported", status: http.StatusMethodNotAllowed, body: []byte(`method not allowed`), official: false, known: true, wantUnsupported: true},
+		{name: "custom 501 capability unsupported", status: http.StatusNotImplemented, body: []byte(`not implemented`), official: false, known: true, wantUnsupported: true},
+		{name: "custom 404 model unavailable stays failure", status: http.StatusNotFound, body: []byte(`{"error":{"code":"model_not_found"}}`), official: false, known: true, wantUnsupported: false},
+		{name: "official 404 stays failure", status: http.StatusNotFound, body: []byte(`404 page not found`), official: true, known: true, wantUnsupported: false},
 		{name: "custom 401 stays failure", status: http.StatusUnauthorized, body: []byte(`unauthorized`), official: false, known: true, wantUnsupported: false},
 		{name: "custom 500 stays failure", status: http.StatusInternalServerError, body: []byte(`internal error`), official: false, known: true, wantUnsupported: false},
 		{name: "custom 2xx without item", status: http.StatusOK, compaction: false, official: false, known: true, wantUnsupported: true},

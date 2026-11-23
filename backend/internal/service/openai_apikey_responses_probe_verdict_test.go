@@ -163,8 +163,14 @@ func TestResponsesProbeVerdictIsConclusive(t *testing.T) {
 		{"200_no_status_field", 200, `{"output":[]}`, true},
 		{"200_non_json", 200, `not-json`, true},
 		{"200_empty_body", 200, ``, true},
-		// 非 2xx 只看状态码，不读 body。
-		{"404_ignores_body_status", 404, `{"status":"failed"}`, true},
+		// 404/405 只有可识别的 JSON endpoint-not-found 才能下结论。
+		{"404_unknown_json", 404, `{"status":"failed"}`, false},
+		{"404_html", 404, `<html>not found</html>`, false},
+		{"404_empty_body", 404, ``, false},
+		{"404_plain_text", 404, `404 page not found`, false},
+		{"404_json_not_found", 404, `{"error":{"message":"not found"}}`, true},
+		{"405_json_method_not_allowed", 405, `{"error":{"message":"method not allowed"}}`, true},
+		{"404_model_not_found", 404, `{"error":{"code":"model_not_found"}}`, false},
 		{"500_ignores_body_status", 500, `{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}`, true},
 	}
 

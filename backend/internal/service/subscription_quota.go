@@ -32,3 +32,10 @@ type SubscriptionQuotaRepository interface {
 	UpsertUserGroupQuotaDefault(ctx context.Context, userID, groupID int64, multiplier float64) error
 	DeleteUserGroupQuotaDefault(ctx context.Context, userID, groupID int64) error
 }
+
+// SubscriptionQuotaBatchRepository 是可选的批量写入扩展。
+// entries 为空表示“清空该分组”：所有有效订阅置 1.0，并删除全部默认值。
+// 返回值是本次实际受影响的用户 ID，用于提交后批量失效缓存。
+type SubscriptionQuotaBatchRepository interface {
+	BatchSetGroupQuotaMultipliers(ctx context.Context, groupID int64, entries []GroupQuotaMultiplierInput) ([]int64, error)
+}

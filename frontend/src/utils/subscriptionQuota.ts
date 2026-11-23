@@ -2,6 +2,11 @@ import type { UserSubscription } from '@/types'
 
 const ONE_DAY_MS = 24 * 60 * 60 * 1000
 
+/** A limit counts as configured only when it is a finite positive number. */
+export function hasPositiveLimit(limit: number | null | undefined): boolean {
+  return typeof limit === 'number' && Number.isFinite(limit) && limit > 0
+}
+
 export type ExpirationDateRelation = 'expired' | 'today' | 'tomorrow' | 'later'
 
 export type RemainingExpiryDuration =

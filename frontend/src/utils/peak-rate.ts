@@ -57,12 +57,38 @@ const DAY_KEYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const
 /** 展示顺序：周一 … 周日。 */
 const DAY_DISPLAY_ORDER = [1, 2, 3, 4, 5, 6, 0] as const
 
-/** HH:MM（00:00–23:59），与后端 parseMinutes / time input 口径一致。 */
+const STRICT_PEAK_TIME = /^([01]\d|2[0-3]):([0-5]\d)$/
+/**
+ * 旧单时段字段（peak_start/peak_end）在存量数据中允许单位数小时，
+ * 例如 `9:00`。迁移不会回填这些字段，因此 legacy 解析必须放宽，
+ * 避免历史分组的高峰徽章/编辑弹窗被误判为无效。
+ */
+const LEGACY_PEAK_TIME = /^(\d{1,2}):([0-5]\d)$/
+
+/** HH:MM（00:00–23:59），用于新数组窗口，保持严格口径。 */
 export function parsePeakRateMinutes(value: string | null | undefined): number | null {
   if (!value) return null
-  const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(value.trim())
+  const match = STRICT_PEAK_TIME.exec(value.trim())
   if (!match) return null
   return Number(match[1]) * 60 + Number(match[2])
+}
+
+/** 宽松解析旧字段：接受 `9:00`，统一按分钟返回；小时必须在 0–23。 */
+export function parseLegacyPeakRateMinutes(value: string | null | undefined): number | null {
+  if (!value) return null
+  const match = LEGACY_PEAK_TIME.exec(value.trim())
+  if (!match) return null
+  const hours = Number(match[1])
+  if (hours > 23) return null
+  return hours * 60 + Number(match[2])
+}
+
+/** 把合法时间规范成两位小时（`9:00` → `09:00`）；非法输入返回 null。 */
+export function normalizePeakRateTime(value: string | null | undefined): string | null {
+  const minutes = parseLegacyPeakRateMinutes(value)
+  if (minutes == null) return null
+  const hours = Math.floor(minutes / 60)
+  return `${String(hours).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`
 }
 
 /** 单个窗口是否可用于展示/计费：时间格式合法、start < end 且倍率非负。 */
@@ -79,13 +105,24 @@ export function isValidPeakRateWindow(window: PeakRateWindow | null | undefined)
   )
 }
 
+/** 旧字段窗口校验：时间用宽松解析，返回时已规范为两位小时。 */
 function legacyPeakRateWindow(fields: PeakRateFields): PeakRateWindow | null {
-  const candidate: PeakRateWindow = {
-    start: fields.peak_start ?? '',
-    end: fields.peak_end ?? '',
-    multiplier: fields.peak_rate_multiplier ?? 1,
+  const start = normalizePeakRateTime(fields.peak_start)
+  const end = normalizePeakRateTime(fields.peak_end)
+  const multiplier = fields.peak_rate_multiplier ?? 1
+  if (start == null || end == null) return null
+  const startMinutes = parsePeakRateMinutes(start)
+  const endMinutes = parsePeakRateMinutes(end)
+  if (
+    startMinutes == null ||
+    endMinutes == null ||
+    startMinutes >= endMinutes ||
+    !Number.isFinite(multiplier) ||
+    multiplier < 0
+  ) {
+    return null
   }
-  return isValidPeakRateWindow(candidate) ? candidate : null
+  return { start, end, multiplier }
 }
 
 /**

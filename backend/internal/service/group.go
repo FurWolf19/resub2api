@@ -180,6 +180,16 @@ func (g *Group) HasFiveHourLimit() bool {
 	return g.FiveHourLimitUSD != nil && *g.FiveHourLimitUSD > 0
 }
 
+// NormalizeFiveHourLimitUSD 把 5h 限额的 <=0 统一为 NULL（无限制）。
+// 日/周/月限额仍使用 admin_group.go 的 normalizeLimit，0 表示零额度；
+// 历史数据中的 0 不做迁移，读取与计费继续由 HasFiveHourLimit 的 >0 判断兼容。
+func NormalizeFiveHourLimitUSD(limit *float64) *float64 {
+	if limit == nil || *limit <= 0 {
+		return nil
+	}
+	return limit
+}
+
 // GetImagePrice 根据 image_size 返回对应的图片生成价格
 // 如果分组未配置价格，返回 nil（调用方应使用默认值）
 func (g *Group) GetImagePrice(imageSize string) *float64 {
@@ -300,6 +310,61 @@ func parseMinutes(hhmm string) (int, bool) {
 	if (colon != 1 && colon != 2) || len(hhmm)-colon-1 != 2 {
 		return 0, false
 	}
+	return parseMinuteDigits(hhmm, colon)
+}
+
+// parsePeakRateWindowMinutes 严格解析新数组（peak_rate_windows）的 "HH:MM"：
+// 小时与分钟都必须两位，小时 00..23、分钟 00..59。
+// 旧字段 peak_start/peak_end 仍使用宽松的 parseMinutes，兼容存量数据（例如 "9:00"）。
+func parsePeakRateWindowMinutes(hhmm string) (int, bool) {
+	if len(hhmm) != 5 || hhmm[2] != ':' {
+		return 0, false
+	}
+	return parseMinuteDigits(hhmm, 2)
+}
+
+// parseLegacyPeakMinutes 解析存量数据的宽松时间格式："H:M"、"H:MM"、"HH:M"、
+// "HH:MM" 均可（小时 0..23、分钟 0..59）。仅用于旧字段与数据库存量窗口的归一化，
+// 新 API 的 peak_rate_windows 仍由 parsePeakRateWindowMinutes 严格校验。
+func parseLegacyPeakMinutes(hhmm string) (int, bool) {
+	s := strings.TrimSpace(hhmm)
+	colon := strings.IndexByte(s, ':')
+	if colon < 1 || colon > 2 {
+		return 0, false
+	}
+	minutePart := s[colon+1:]
+	if len(minutePart) < 1 || len(minutePart) > 2 {
+		return 0, false
+	}
+	h := 0
+	for i := 0; i < colon; i++ {
+		d := s[i] - '0'
+		if d > 9 {
+			return 0, false
+		}
+		h = h*10 + int(d)
+	}
+	m := 0
+	for i := 0; i < len(minutePart); i++ {
+		d := minutePart[i] - '0'
+		if d > 9 {
+			return 0, false
+		}
+		m = m*10 + int(d)
+	}
+	if h > 23 || m > 59 {
+		return 0, false
+	}
+	return h*60 + m, true
+}
+
+// formatPeakMinutes 把当日分钟数格式化为严格的两位 "HH:MM"。
+func formatPeakMinutes(total int) string {
+	return fmt.Sprintf("%02d:%02d", total/60, total%60)
+}
+
+// parseMinuteDigits 解析 hhmm 中位于 colon 之前的小时与之后固定的两位分钟。
+func parseMinuteDigits(hhmm string, colon int) (int, bool) {
 	h := 0
 	for i := 0; i < colon; i++ {
 		d := hhmm[i] - '0'
@@ -333,16 +398,16 @@ func (g *Group) effectivePeakRateWindows() []PeakRateWindow {
 }
 
 // peakRateWindowsFromLegacyConfig 把旧单时段字段归一化为一个 days=all 的窗口。
+// 旧字段使用宽松解析（例如 "9:00"），生成的新数组统一格式化为 strict "HH:MM"，
+// 避免旧 API 写入的窗口在后续新校验中被误判为非法。
 // 字段缺失或非法（格式错误、start>=end、负倍率）时返回 nil。
 func peakRateWindowsFromLegacyConfig(start, end string, multiplier float64) []PeakRateWindow {
-	start = strings.TrimSpace(start)
-	end = strings.TrimSpace(end)
-	st, okStart := parseMinutes(start)
-	en, okEnd := parseMinutes(end)
+	st, okStart := parseLegacyPeakMinutes(start)
+	en, okEnd := parseLegacyPeakMinutes(end)
 	if !okStart || !okEnd || st >= en || multiplier < 0 {
 		return nil
 	}
-	return []PeakRateWindow{{Start: start, End: end, Multiplier: multiplier}}
+	return []PeakRateWindow{{Start: formatPeakMinutes(st), End: formatPeakMinutes(en), Multiplier: multiplier}}
 }
 
 // PeakMultiplierAt 返回指定时刻 now 的高峰因子。
@@ -429,11 +494,11 @@ func ValidatePeakRateWindows(windows []PeakRateWindow) error {
 	}
 	spans := make([]expandedSpan, 0, len(windows)*7)
 	for i, w := range windows {
-		start, ok := parseMinutes(strings.TrimSpace(w.Start))
+		start, ok := parsePeakRateWindowMinutes(strings.TrimSpace(w.Start))
 		if !ok {
 			return fmt.Errorf("第 %d 个高峰时段的开始时间 %q 格式应为 HH:MM", i+1, w.Start)
 		}
-		end, ok := parseMinutes(strings.TrimSpace(w.End))
+		end, ok := parsePeakRateWindowMinutes(strings.TrimSpace(w.End))
 		if !ok {
 			return fmt.Errorf("第 %d 个高峰时段的结束时间 %q 格式应为 HH:MM", i+1, w.End)
 		}
@@ -486,12 +551,13 @@ func ValidatePeakRateWindows(windows []PeakRateWindow) error {
 }
 
 // NormalizePeakRateWindows 归一化最终落库的多时段高峰配置：
-//   - 非订阅分组或未启用 → 清空（返回 nil）；
+//   - 仅非订阅分组清空（返回 nil）；订阅分组即使暂时关闭高峰也保留窗口配置，
+//     便于重新开启时恢复，运行期由 PeakRateEnabled 控制是否生效；
 //   - 去重并升序 days、trim start/end；保持窗口原始顺序（不按时间重排，避免改变前端顺序）。
 //
 // 调用顺序为先归一化、后校验；enabled=true 时校验保证各字段合法。
-func NormalizePeakRateWindows(subscriptionType string, enabled bool, windows []PeakRateWindow) []PeakRateWindow {
-	if subscriptionType != SubscriptionTypeSubscription || !enabled {
+func NormalizePeakRateWindows(subscriptionType string, _ bool, windows []PeakRateWindow) []PeakRateWindow {
+	if subscriptionType != SubscriptionTypeSubscription {
 		return nil
 	}
 	out := make([]PeakRateWindow, 0, len(windows))
@@ -502,6 +568,29 @@ func NormalizePeakRateWindows(subscriptionType string, enabled bool, windows []P
 			Multiplier: w.Multiplier,
 			Days:       normalizePeakRateDays(w.Days),
 		})
+	}
+	return out
+}
+
+// NormalizeStoredPeakRateWindows 归一化从数据库读出的存量窗口时间：
+// 把旧版本可能写入的宽松格式（"9:00"、"9:5" 等）格式化为严格 "HH:MM"，
+// 让后续 ValidatePeakRateWindows 不再误伤存量数据。非法时间（"25:00"、
+// "09:60"）保持原样，交由校验拒绝。
+//
+// 注意：新 API 显式提交的 windows 不走本函数，仍按严格格式校验。
+func NormalizeStoredPeakRateWindows(windows []PeakRateWindow) []PeakRateWindow {
+	if len(windows) == 0 {
+		return windows
+	}
+	out := make([]PeakRateWindow, len(windows))
+	for i, w := range windows {
+		out[i] = w
+		if total, ok := parseLegacyPeakMinutes(w.Start); ok {
+			out[i].Start = formatPeakMinutes(total)
+		}
+		if total, ok := parseLegacyPeakMinutes(w.End); ok {
+			out[i].End = formatPeakMinutes(total)
+		}
 	}
 	return out
 }

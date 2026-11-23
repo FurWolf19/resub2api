@@ -5,6 +5,8 @@ import {
   formatPeakRateWindow,
   formatPeakRateWindowPreview,
   hasPeakRate,
+  normalizePeakRateTime,
+  parsePeakRateMinutes,
   type PeakRateFields,
 } from '../peak-rate'
 
@@ -69,6 +71,31 @@ describe('peak-rate display helpers', () => {
   it('treats empty days as every day and custom days with Chinese separators', () => {
     expect(formatPeakRateDays([], t)).toBe('每天')
     expect(formatPeakRateDays([1, 3], t)).toBe('周一、周三')
+  })
+
+  it('accepts and normalizes legacy single-digit hours', () => {
+    const fields: PeakRateFields = {
+      peak_rate_enabled: true,
+      peak_start: '9:00',
+      peak_end: '18:00',
+      peak_rate_multiplier: 1.5,
+    }
+    expect(normalizePeakRateTime('9:00')).toBe('09:00')
+    expect(hasPeakRate(fields)).toBe(true)
+    expect(effectivePeakRateWindows(fields).windows[0]).toMatchObject({
+      start: '09:00',
+      end: '18:00',
+    })
+    expect(formatPeakRateWindow(fields)).toBe('09:00-18:00 ×1.5')
+  })
+
+  it('keeps explicit window arrays strict', () => {
+    const fields: PeakRateFields = {
+      peak_rate_enabled: true,
+      peak_rate_windows: [{ start: '9:00', end: '10:00', multiplier: 2 }],
+    }
+    expect(parsePeakRateMinutes('9:00')).toBeNull()
+    expect(hasPeakRate(fields)).toBe(false)
   })
 
   it('ignores invalid windows and requires enabled', () => {

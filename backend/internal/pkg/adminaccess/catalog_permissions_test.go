@@ -18,3 +18,28 @@ func TestScopedPermissionCatalogRequiresExplicitGrant(t *testing.T) {
 		t.Fatal("旧策略不得继承新增权限")
 	}
 }
+
+func TestQuotaMultiplierRoutesAreRegistered(t *testing.T) {
+	groupsRead := Policy{GlobalPermissions: []string{"groups.read"}}
+	if !RouteAllowed(groupsRead, "GET", "/api/v1/admin/groups/:id/quota-multipliers") {
+		t.Fatal("groups.read 应允许读取分组额度倍率")
+	}
+
+	assign := Policy{GlobalPermissions: []string{"subscriptions.assign"}}
+	for _, route := range []struct{ method, path string }{
+		{"PUT", "/api/v1/admin/subscriptions/:id/quota-multiplier"},
+		{"PUT", "/api/v1/admin/groups/:id/quota-multipliers"},
+	} {
+		if !RouteAllowed(assign, route.method, route.path) {
+			t.Errorf("subscriptions.assign 应允许 %s %s", route.method, route.path)
+		}
+	}
+
+	// 未授予对应权限时仍然拒绝，避免新增路由被默认放行。
+	if RouteAllowed(Policy{}, "GET", "/api/v1/admin/groups/:id/quota-multipliers") {
+		t.Fatal("未授权策略不得读取分组额度倍率")
+	}
+	if RouteAllowed(groupsRead, "PUT", "/api/v1/admin/subscriptions/:id/quota-multiplier") {
+		t.Fatal("groups.read 不得修改订阅额度倍率")
+	}
+}

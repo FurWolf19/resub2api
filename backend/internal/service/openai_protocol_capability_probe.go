@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/singleflight"
@@ -26,8 +27,13 @@ const (
 	openAIProtocolAsyncProbeTimeout = 15 * time.Second
 	// openAIProtocolProbeFailureBackoff 是网络层探测失败后的短退避，避免打爆上游。
 	openAIProtocolProbeFailureBackoff = 30 * time.Second
+	// openAIProtocolProbeInconclusiveBackoff 是探测有 HTTP 响应但无法下结论
+	// （401、模型不可用等）时的负缓存，期间直接跟随入站协议，不再阻塞探测。
+	openAIProtocolProbeInconclusiveBackoff = 45 * time.Second
 	// openAIProtocolReprobeCooldown 避免过期账号在每个请求上都重复触发后台重探。
 	openAIProtocolReprobeCooldown = time.Minute
+	// openAIProtocolProbeLastAttemptTTL 用于清理长时间未活跃账号的探测状态。
+	openAIProtocolProbeLastAttemptTTL = 24 * time.Hour
 
 	openAIProtocolProbeChatMaxTokens = 8
 )
@@ -64,7 +70,23 @@ var (
 	openAIProtocolProbeBackoffTill = map[int64]time.Time{}
 	openAIProtocolProbeInFlight    sync.Map // accountID -> struct{}
 	openAIProtocolProbeLastAttempt sync.Map // accountID -> time.Time
+	openAIProtocolLegacyStampAt    sync.Map // accountID -> time.Time
+	openAIProtocolProbeLastPrune   atomic.Int64
 )
+
+// openAIProtocolLegacyStampCooldown 避免同一账号的 legacy probed_at 迁移在
+// 首次异步写回完成前被每个并发请求重复触发。
+const openAIProtocolLegacyStampCooldown = time.Minute
+
+func shouldPersistOpenAIProtocolLegacyStamp(accountID int64, now time.Time) bool {
+	if last, ok := openAIProtocolLegacyStampAt.Load(accountID); ok {
+		if attemptedAt, ok := last.(time.Time); ok && now.Sub(attemptedAt) < openAIProtocolLegacyStampCooldown {
+			return false
+		}
+	}
+	openAIProtocolLegacyStampAt.Store(accountID, now)
+	return true
+}
 
 func openAIProtocolProbeInBackoff(accountID int64, now time.Time) bool {
 	openAIProtocolProbeBackoffMu.Lock()
@@ -80,10 +102,62 @@ func openAIProtocolProbeInBackoff(accountID int64, now time.Time) bool {
 	return false
 }
 
-func markOpenAIProtocolProbeFailure(accountID int64, now time.Time) {
+func setOpenAIProtocolProbeBackoff(accountID int64, until time.Time) {
 	openAIProtocolProbeBackoffMu.Lock()
 	defer openAIProtocolProbeBackoffMu.Unlock()
-	openAIProtocolProbeBackoffTill[accountID] = now.Add(openAIProtocolProbeFailureBackoff)
+	if existing, ok := openAIProtocolProbeBackoffTill[accountID]; ok && existing.After(until) {
+		return
+	}
+	openAIProtocolProbeBackoffTill[accountID] = until
+}
+
+// clearOpenAIProtocolProbeBackoff 供显式“测试账号”探测绕过负缓存：
+// 管理员主动触发的探测应当真实请求上游，而不是被后台自动探测的 45s 退避吞掉。
+func clearOpenAIProtocolProbeBackoff(accountID int64) {
+	openAIProtocolProbeBackoffMu.Lock()
+	defer openAIProtocolProbeBackoffMu.Unlock()
+	delete(openAIProtocolProbeBackoffTill, accountID)
+}
+
+func markOpenAIProtocolProbeFailure(accountID int64, now time.Time) {
+	setOpenAIProtocolProbeBackoff(accountID, now.Add(openAIProtocolProbeFailureBackoff))
+}
+
+// markOpenAIProtocolProbeInconclusive 缓存“有响应但无法下结论”的探测，
+// 只影响无结论结果；明确支持/不支持不会走这里。
+func markOpenAIProtocolProbeInconclusive(accountID int64, now time.Time) {
+	setOpenAIProtocolProbeBackoff(accountID, now.Add(openAIProtocolProbeInconclusiveBackoff))
+}
+
+// pruneOpenAIProtocolProbeState 低频清理探测状态，避免已删除/长期不活跃账号的
+// sync.Map 条目无限增长。每 10 分钟最多执行一次，代价可忽略。
+func pruneOpenAIProtocolProbeState(now time.Time) {
+	last := openAIProtocolProbeLastPrune.Load()
+	if now.Unix()-last < int64((10 * time.Minute).Seconds()) {
+		return
+	}
+	if !openAIProtocolProbeLastPrune.CompareAndSwap(last, now.Unix()) {
+		return
+	}
+	openAIProtocolProbeLastAttempt.Range(func(key, value any) bool {
+		if attemptedAt, ok := value.(time.Time); ok && now.Sub(attemptedAt) > openAIProtocolProbeLastAttemptTTL {
+			openAIProtocolProbeLastAttempt.Delete(key)
+		}
+		return true
+	})
+	openAIProtocolLegacyStampAt.Range(func(key, value any) bool {
+		if attemptedAt, ok := value.(time.Time); ok && now.Sub(attemptedAt) > openAIProtocolProbeLastAttemptTTL {
+			openAIProtocolLegacyStampAt.Delete(key)
+		}
+		return true
+	})
+	openAIProtocolProbeBackoffMu.Lock()
+	for accountID, until := range openAIProtocolProbeBackoffTill {
+		if !now.Before(until) {
+			delete(openAIProtocolProbeBackoffTill, accountID)
+		}
+	}
+	openAIProtocolProbeBackoffMu.Unlock()
 }
 
 // openAIChatCompletionsProbePayload 构造最小 Chat Completions 探测请求。
@@ -103,7 +177,8 @@ func openAIChatCompletionsProbePayload(modelID string) []byte {
 }
 
 // decideChatCompletionsProbeSupport 判定 Chat Completions 端点探测结果。
-// 2xx=true；404/405=false；401/网络/模型不存在=unknown；其余非 2xx 保守 true。
+// 2xx=true；可识别的 JSON 404/405=false；其它 404/405（HTML/空体/纯文本/未知 JSON）
+// 保持 unknown；401/网络/模型不存在=unknown；其余非 2xx 保守 true。
 func decideChatCompletionsProbeSupport(status int, body []byte) (supported bool, conclusive bool) {
 	if status == http.StatusUnauthorized {
 		return false, false
@@ -112,7 +187,10 @@ func decideChatCompletionsProbeSupport(status int, body []byte) (supported bool,
 		return false, false
 	}
 	if status == http.StatusNotFound || status == http.StatusMethodNotAllowed {
-		return false, true
+		if openAIEndpointNotFoundJSON(status, body) {
+			return false, true
+		}
+		return false, false
 	}
 	if status < 200 || status >= 300 {
 		return true, true
@@ -157,8 +235,15 @@ func probeOpenAIProtocolCapabilities(
 		}
 		defer cancel()
 		probeResult := executeOpenAIProtocolProbe(probeCtx, deps, account)
-		if probeResult.TransportFailed {
+		switch {
+		case probeResult.TransportFailed:
 			markOpenAIProtocolProbeFailure(accountID, time.Now())
+		case probeResult.Responded && !(probeResult.Responses.Conclusive && probeResult.Chat.Conclusive):
+			// 401/模型不可用等“有响应但无结论”同样需要负缓存，否则首次阻塞
+			// 探测会在每个请求上重复执行。只有一个协议有结论、另一个无结论时
+			// NeedsRefresh 会恒真，后台会每隔约一分钟重探；这里同样退避，避免
+			// 有结论的账号被另一个协议的不确定性拖入持续探测。
+			markOpenAIProtocolProbeInconclusive(accountID, time.Now())
 		}
 		if probeResult.anyConclusive() && deps.accountRepo != nil {
 			persistOpenAIProtocolProbeResult(probeCtx, deps, account, probeResult)
@@ -275,23 +360,46 @@ func probeOpenAIProtocolEndpoint(
 }
 
 func persistOpenAIProtocolProbeResult(ctx context.Context, deps openAIProtocolProbeDeps, account *Account, result openAIProtocolProbeResult) {
-	if deps.accountRepo == nil {
+	if deps.accountRepo == nil || account == nil {
 		return
 	}
+	now := time.Now()
 	prior := openai_compat.ResolveProtocolCapabilities(account.Extra)
+	patches := make([]OpenAIProtocolCapabilityPatch, 0, 2)
 	if result.Chat.Conclusive {
-		prior.ChatCompletions = openai_compat.ProtocolCapability{Known: true, Supported: result.Chat.Supported, ProbedAt: time.Now()}
+		supported := result.Chat.Supported
+		patches = append(patches, OpenAIProtocolCapabilityPatch{
+			Protocol: openai_compat.ProtocolChatCompletions, Supported: &supported, ProbedAt: now,
+		})
+	} else if prior.ChatCompletions.Known {
+		// 无法下结论时保留旧值，只刷新探测时间，避免该协议在 TTL 内被
+		// 每个请求反复重探（旧值语义不变）。
+		patches = append(patches, OpenAIProtocolCapabilityPatch{
+			Protocol: openai_compat.ProtocolChatCompletions, ProbedAt: now,
+		})
 	}
 	if result.Responses.Conclusive {
-		prior.Responses = openai_compat.ProtocolCapability{Known: true, Supported: result.Responses.Supported, ProbedAt: time.Now()}
+		supported := result.Responses.Supported
+		patches = append(patches, OpenAIProtocolCapabilityPatch{
+			Protocol: openai_compat.ProtocolResponses, Supported: &supported, ProbedAt: now,
+		})
+	} else if prior.Responses.Known {
+		patches = append(patches, OpenAIProtocolCapabilityPatch{
+			Protocol: openai_compat.ProtocolResponses, ProbedAt: now,
+		})
 	}
-	updates := map[string]any{
-		openai_compat.ExtraKeyProtocolCapabilities: prior.ToExtra(),
+	if len(patches) == 0 {
+		return
 	}
-	if result.Responses.Conclusive {
-		updates[openai_compat.ExtraKeyResponsesSupported] = result.Responses.Supported
+	repo, ok := deps.accountRepo.(OpenAIProtocolCapabilityRepository)
+	if !ok {
+		logger.LegacyPrintf("service.openai_probe", "protocol_probe_persist_unsupported: account_id=%d", account.ID)
+		return
 	}
-	if err := deps.accountRepo.UpdateExtra(ctx, account.ID, updates); err != nil {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := repo.MergeOpenAIProtocolCapabilities(ctx, account.ID, patches); err != nil {
 		logger.LegacyPrintf("service.openai_probe", "protocol_probe_persist_failed: account_id=%d err=%v", account.ID, err)
 	}
 }

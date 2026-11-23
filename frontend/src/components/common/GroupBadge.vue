@@ -91,9 +91,9 @@ const peakFields = computed(() => ({
   peak_rate_windows: props.peakRateWindows
 }))
 
-const hasPeakRate = computed(() => {
-  return Boolean(props.showRate && groupHasPeakRate(peakFields.value))
-})
+// 高峰徽章独立于价格倍率显示开关：showRate=false 只隐藏价格/订阅标签，
+// 调用方仍可通过传 peakRate* props 展示高峰窗口（例如订阅管理表格）。
+const hasPeakRate = computed(() => groupHasPeakRate(peakFields.value))
 
 const peakRateText = computed(() => {
   return formatPeakRateWindowPreview(

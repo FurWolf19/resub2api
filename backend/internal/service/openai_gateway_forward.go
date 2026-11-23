@@ -197,13 +197,18 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		SetActualOpenAIUpstreamEndpoint(c, "/v1/chat/completions")
 		result, forwardErr := s.forwardResponsesViaRawChatCompletions(ctx, c, account, body, startTime)
 		if unsupported, ok := asOpenAIProtocolUnsupportedError(forwardErr); ok {
-			account = s.recordOpenAIProtocolCapability(ctx, account, unsupported.Protocol, false)
+			if unsupported.CapabilityEvidence {
+				account = s.recordOpenAIProtocolCapability(ctx, account, unsupported.Protocol, false)
+			}
 			markOpenAIProtocolFallbackTried(c)
 			retryResult, retryErr := s.Forward(ctx, c, account, body)
 			if retryErr == nil {
 				s.recordOpenAIProtocolCapability(ctx, account, openai_compat.ProtocolResponses, true)
+				return retryResult, nil
 			}
-			return retryResult, retryErr
+			// 两种协议都失败时保留首个“协议不支持”错误（404/405），否则客户端
+			// 和错误透传规则只能看到第二次的失败原因。
+			return retryResult, errors.Join(forwardErr, retryErr)
 		}
 		return result, forwardErr
 	}
@@ -1140,7 +1145,9 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 			upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
 			upstreamCode := extractUpstreamErrorCode(respBody)
 			if !requiresResponses && s.shouldUseOpenAIProtocolFallback(c, account, openai_compat.ProtocolResponses, resp.StatusCode, respBody) {
-				account = s.recordOpenAIProtocolCapability(ctx, account, openai_compat.ProtocolResponses, false)
+				if openAIEndpointNotFoundJSON(resp.StatusCode, respBody) {
+					account = s.recordOpenAIProtocolCapability(ctx, account, openai_compat.ProtocolResponses, false)
+				}
 				markOpenAIProtocolFallbackTried(c)
 				if resp.Body != nil {
 					_ = resp.Body.Close()
@@ -1149,8 +1156,13 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				fallbackResult, fallbackErr := s.forwardResponsesViaRawChatCompletions(ctx, c, account, body, startTime)
 				if fallbackErr == nil {
 					s.recordOpenAIProtocolCapability(ctx, account, openai_compat.ProtocolChatCompletions, true)
+					return fallbackResult, nil
 				}
-				return fallbackResult, fallbackErr
+				// 两种协议都失败时保留首次 404/405 的协议不支持信息，避免只暴露第二次错误。
+				return nil, errors.Join(
+					&openAIProtocolUnsupportedError{Protocol: openai_compat.ProtocolResponses, StatusCode: resp.StatusCode, CapabilityEvidence: openAIEndpointNotFoundJSON(resp.StatusCode, respBody)},
+					fallbackErr,
+				)
 			}
 			if !agentTaskRecoveryTried && s.isAgentIdentityAccount(ctx, account) && isAgentIdentityTaskInvalidHTTPResponse(resp.StatusCode, respBody) {
 				agentTaskRecoveryTried = true

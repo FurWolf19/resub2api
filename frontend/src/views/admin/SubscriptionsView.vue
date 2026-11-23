@@ -240,6 +240,11 @@
               :platform="row.group.platform"
               :subscription-type="row.group.subscription_type"
               :rate-multiplier="row.group.rate_multiplier"
+              :peak-rate-enabled="row.group.peak_rate_enabled"
+              :peak-start="row.group.peak_start"
+              :peak-end="row.group.peak_end"
+              :peak-rate-multiplier="row.group.peak_rate_multiplier"
+              :peak-rate-windows="row.group.peak_rate_windows"
               :show-rate="false"
             />
             <span v-else class="text-sm text-gray-400 dark:text-dark-500">-</span>
@@ -248,8 +253,13 @@
           <template #cell-quota_multiplier="{ row }">
             <button
               type="button"
-              class="rounded-md px-2 py-1 text-sm font-medium tabular-nums text-gray-700 transition-colors hover:bg-primary-50 hover:text-primary-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 dark:text-gray-200 dark:hover:bg-primary-900/20 dark:hover:text-primary-400 dark:focus-visible:ring-offset-dark-800"
-              :title="t('admin.subscriptions.editQuotaMultiplier')"
+              class="rounded-md px-2 py-1 text-sm font-medium tabular-nums text-gray-700 transition-colors hover:bg-primary-50 hover:text-primary-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:text-gray-200 dark:hover:bg-primary-900/20 dark:hover:text-primary-400 dark:focus-visible:ring-offset-dark-800"
+              :disabled="row.status === 'revoked'"
+              :title="
+                row.status === 'revoked'
+                  ? t('admin.subscriptions.quotaMultiplierRevokedHint')
+                  : t('admin.subscriptions.editQuotaMultiplier')
+              "
               @click="openQuotaMultiplierDialog(row)"
             >
               {{ formatQuotaMultiplier(row.quota_multiplier) }}
@@ -259,7 +269,7 @@
           <template #cell-usage="{ row }">
             <div class="min-w-[280px] space-y-2">
               <!-- Five-hour Usage -->
-              <div v-if="row.group?.five_hour_limit_usd" class="usage-row">
+              <div v-if="hasPositiveLimit(row.group?.five_hour_limit_usd)" class="usage-row">
                 <div class="flex items-center gap-2">
                   <span class="usage-label">{{ t('admin.subscriptions.fiveHour') }}</span>
                   <div class="h-1.5 flex-1 rounded-full bg-gray-200 dark:bg-dark-600">
@@ -309,7 +319,7 @@
               </div>
 
               <!-- Daily Usage -->
-              <div v-if="row.group?.daily_limit_usd" class="usage-row">
+              <div v-if="hasPositiveLimit(row.group?.daily_limit_usd)" class="usage-row">
                 <div class="flex items-center gap-2">
                   <span class="usage-label">{{ t('admin.subscriptions.daily') }}</span>
                   <div class="h-1.5 flex-1 rounded-full bg-gray-200 dark:bg-dark-600">
@@ -356,7 +366,7 @@
               </div>
 
               <!-- Weekly Usage -->
-              <div v-if="row.group?.weekly_limit_usd" class="usage-row">
+              <div v-if="hasPositiveLimit(row.group?.weekly_limit_usd)" class="usage-row">
                 <div class="flex items-center gap-2">
                   <span class="usage-label">{{ t('admin.subscriptions.weekly') }}</span>
                   <div class="h-1.5 flex-1 rounded-full bg-gray-200 dark:bg-dark-600">
@@ -403,7 +413,7 @@
               </div>
 
               <!-- Monthly Usage -->
-              <div v-if="row.group?.monthly_limit_usd" class="usage-row">
+              <div v-if="hasPositiveLimit(row.group?.monthly_limit_usd)" class="usage-row">
                 <div class="flex items-center gap-2">
                   <span class="usage-label">{{ t('admin.subscriptions.monthly') }}</span>
                   <div class="h-1.5 flex-1 rounded-full bg-gray-200 dark:bg-dark-600">
@@ -452,10 +462,10 @@
               <!-- No Limits - Unlimited badge -->
               <div
                 v-if="
-                  !row.group?.daily_limit_usd &&
-                  !row.group?.weekly_limit_usd &&
-                  !row.group?.monthly_limit_usd &&
-                  !row.group?.five_hour_limit_usd
+                  !hasPositiveLimit(row.group?.daily_limit_usd) &&
+                  !hasPositiveLimit(row.group?.weekly_limit_usd) &&
+                  !hasPositiveLimit(row.group?.monthly_limit_usd) &&
+                  !hasPositiveLimit(row.group?.five_hour_limit_usd)
                 "
                 class="flex items-center gap-2 rounded-lg bg-gradient-to-r from-emerald-50 to-teal-50 px-3 py-2 dark:from-emerald-900/20 dark:to-teal-900/20"
               >
@@ -682,6 +692,11 @@
                 :platform="(option as unknown as GroupOption).platform"
                 :subscription-type="(option as unknown as GroupOption).subscriptionType"
                 :rate-multiplier="(option as unknown as GroupOption).rate"
+                :peak-rate-enabled="(option as unknown as GroupOption).peakRateEnabled"
+                :peak-start="(option as unknown as GroupOption).peakStart"
+                :peak-end="(option as unknown as GroupOption).peakEnd"
+                :peak-rate-multiplier="(option as unknown as GroupOption).peakRateMultiplier"
+                :peak-rate-windows="(option as unknown as GroupOption).peakRateWindows"
               />
               <span v-else class="text-gray-400">{{ t('admin.subscriptions.selectGroup') }}</span>
             </template>
@@ -691,6 +706,11 @@
                 :platform="(option as unknown as GroupOption).platform"
                 :subscription-type="(option as unknown as GroupOption).subscriptionType"
                 :rate-multiplier="(option as unknown as GroupOption).rate"
+                :peak-rate-enabled="(option as unknown as GroupOption).peakRateEnabled"
+                :peak-start="(option as unknown as GroupOption).peakStart"
+                :peak-end="(option as unknown as GroupOption).peakEnd"
+                :peak-rate-multiplier="(option as unknown as GroupOption).peakRateMultiplier"
+                :peak-rate-windows="(option as unknown as GroupOption).peakRateWindows"
                 :description="(option as unknown as GroupOption).description"
                 :selected="selected"
               />
@@ -713,6 +733,21 @@
             />
             {{ t('admin.subscriptions.assignQuotaMultiplier') }}
           </label>
+          <p
+            v-if="!assignQuotaMultiplierEnabled && assignDefaultQuotaMultiplier != null"
+            class="mt-1 flex items-start gap-1.5 text-xs text-gray-500 dark:text-gray-400"
+          >
+            <span class="mt-0.5 rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-900/20 dark:text-amber-300">
+              {{ t('admin.subscriptions.defaultBadge') }}
+            </span>
+            <span>
+              {{
+                t('admin.subscriptions.defaultQuotaMultiplierHint', {
+                  percent: formatQuotaMultiplier(assignDefaultQuotaMultiplier)
+                })
+              }}
+            </span>
+          </p>
           <transition name="quota-multiplier">
             <div v-if="assignQuotaMultiplierEnabled" class="mt-2">
               <div class="flex items-center gap-3">
@@ -728,6 +763,15 @@
                 />
                 <span class="text-sm font-medium tabular-nums text-gray-500 dark:text-gray-400">
                   {{ formatQuotaMultiplier(assignQuotaMultiplier) }}
+                </span>
+                <span
+                  v-if="
+                    assignDefaultQuotaMultiplier != null &&
+                    parseQuotaMultiplierInput(assignQuotaMultiplier) === assignDefaultQuotaMultiplier
+                  "
+                  class="rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-900/20 dark:text-amber-300"
+                >
+                  {{ t('admin.subscriptions.defaultBadge') }}
                 </span>
               </div>
               <p class="input-hint">{{ t('admin.subscriptions.assignQuotaMultiplierHint') }}</p>
@@ -1052,11 +1096,18 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { adminAPI } from '@/api/admin'
-import type { AdminUser, UserSubscription, Group, GroupPlatform, SubscriptionType } from '@/types'
+import type {
+  AdminUser,
+  UserSubscription,
+  Group,
+  GroupPlatform,
+  PeakRateWindow,
+  SubscriptionType
+} from '@/types'
 import type { SimpleUser } from '@/api/admin/usage'
 import type { SubscriptionBulkAction, SubscriptionBulkActionResult, BulkAssignSubscriptionResult } from '@/api/admin/subscriptions'
 import { useTableSelection } from '@/composables/useTableSelection'
@@ -1078,10 +1129,12 @@ import Icon from '@/components/icons/Icon.vue'
 import {
   getRemainingDurationParts,
   getRemainingExpiryDuration,
+  hasPositiveLimit,
   isOneTimeDailyQuota,
   type RemainingDurationParts
 } from '@/utils/subscriptionQuota'
 import { GROUP_PLATFORM_OPTIONS } from '@/constants/platforms'
+import { collectAssignableQuotaDefaults } from './subscriptionQuotaDefaults'
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -1093,6 +1146,11 @@ interface GroupOption {
   platform: GroupPlatform
   subscriptionType: SubscriptionType
   rate: number
+  peakRateEnabled?: boolean
+  peakStart?: string
+  peakEnd?: string
+  peakRateMultiplier?: number
+  peakRateWindows?: PeakRateWindow[]
 }
 
 // Guide modal state
@@ -1318,11 +1376,120 @@ const assignForm = reactive({
 
 const assignQuotaMultiplierEnabled = ref(false)
 const assignQuotaMultiplier = ref<number | string | null>(null)
+const assignDefaultQuotaMultiplier = ref<number | null>(null)
+// 按分组缓存“无订阅用户默认额度倍率”，避免选择用户/分组时重复请求。
+const quotaDefaultsCache = new Map<number, Map<number, number>>()
+let quotaDefaultsRequestVersion = 0
+// 同分组请求序号：只允许最新请求写入缓存，避免旧响应覆盖失效后的新结果。
+let quotaDefaultsGroupRequestSeq = 0
+const quotaDefaultsGroupRequestSeqs = new Map<number, number>()
+
 const handleAssignQuotaMultiplierToggle = () => {
   if (assignQuotaMultiplierEnabled.value && assignQuotaMultiplier.value == null) {
-    assignQuotaMultiplier.value = 1
+    assignQuotaMultiplier.value = assignDefaultQuotaMultiplier.value ?? 1
   }
 }
+
+const invalidateAssignQuotaDefaults = (groupId: number | null) => {
+  quotaDefaultsRequestVersion += 1
+  if (groupId == null) {
+    quotaDefaultsCache.clear()
+    quotaDefaultsGroupRequestSeqs.clear()
+  } else {
+    quotaDefaultsCache.delete(groupId)
+    quotaDefaultsGroupRequestSeqs.delete(groupId)
+  }
+}
+
+/** 只重置分配弹窗内的预填状态；分组缓存不因关闭弹窗而失效。 */
+const resetAssignQuotaState = () => {
+  // 取消关闭前仍在途的预填请求，避免弹窗关闭后旧响应回填状态（缓存保留）。
+  quotaDefaultsRequestVersion += 1
+  assignDefaultQuotaMultiplier.value = null
+  if (!assignQuotaMultiplierEnabled.value) {
+    assignQuotaMultiplier.value = null
+  }
+}
+
+const loadGroupQuotaDefaults = async (groupId: number): Promise<Map<number, number> | null> => {
+  const cached = quotaDefaultsCache.get(groupId)
+  if (cached) return cached
+  if (typeof adminAPI.groups.getGroupQuotaMultipliers !== 'function') return null
+  const requestVersion = quotaDefaultsRequestVersion
+  const requestSeq = ++quotaDefaultsGroupRequestSeq
+  quotaDefaultsGroupRequestSeqs.set(groupId, requestSeq)
+  try {
+    const entries = await adminAPI.groups.getGroupQuotaMultipliers(groupId)
+    // 失效后或同分组已有更新请求时，旧响应直接丢弃，不能回写缓存。
+    if (requestVersion !== quotaDefaultsRequestVersion) return null
+    if (quotaDefaultsGroupRequestSeqs.get(groupId) !== requestSeq) return null
+    const defaults = collectAssignableQuotaDefaults(entries)
+    quotaDefaultsCache.set(groupId, defaults)
+    return defaults
+  } catch (error) {
+    if (requestVersion !== quotaDefaultsRequestVersion) return null
+    if (quotaDefaultsGroupRequestSeqs.get(groupId) !== requestSeq) return null
+    // 默认值只用于预填，请求失败时静默降级，不阻塞分配。
+    console.error('Failed to load group quota multiplier defaults:', error)
+    return null
+  }
+}
+
+const refreshAssignDefaultQuotaMultiplier = async () => {
+  const groupId = assignForm.group_id
+  const userIds = batchAssignEnabled.value
+    ? assignUsers.value.map((user) => user.id)
+    : assignForm.user_id != null
+      ? [assignForm.user_id]
+      : []
+  const requestVersion = ++quotaDefaultsRequestVersion
+  assignDefaultQuotaMultiplier.value = null
+  if (!groupId || userIds.length === 0) {
+    if (!assignQuotaMultiplierEnabled.value) {
+      assignQuotaMultiplier.value = null
+    }
+    return
+  }
+  const defaults = await loadGroupQuotaDefaults(groupId)
+  if (requestVersion !== quotaDefaultsRequestVersion) return
+  if (!defaults) return
+  const values: number[] = []
+  for (const userId of userIds) {
+    const value = defaults.get(userId)
+    if (value == null) {
+      values.length = 0
+      break
+    }
+    values.push(value)
+  }
+  const allSame =
+    values.length === userIds.length &&
+    values.length > 0 &&
+    values.every((value) => value === values[0])
+  if (!allSame) {
+    if (!assignQuotaMultiplierEnabled.value) {
+      assignQuotaMultiplier.value = null
+    }
+    return
+  }
+  assignDefaultQuotaMultiplier.value = values[0]
+  // 只预填，不自动勾选；勾选后才随分配提交。
+  if (!assignQuotaMultiplierEnabled.value) {
+    assignQuotaMultiplier.value = values[0]
+  }
+}
+
+watch(
+  [
+    () => assignForm.group_id,
+    () => assignForm.user_id,
+    () => batchAssignEnabled.value,
+    () => assignUsers.value.map((user) => user.id).join(',')
+  ],
+  () => {
+    void refreshAssignDefaultQuotaMultiplier()
+  }
+)
 
 const extendForm = reactive({
   days: 30
@@ -1358,7 +1525,7 @@ const formatQuotaMultiplier = (value: number | string | null | undefined): strin
   if (value === null || value === undefined || value === '') return '—'
   const numeric = Number(value)
   if (!Number.isFinite(numeric)) return '—'
-  return `${Number((numeric * 100).toFixed(1))}%`
+  return `${(numeric * 100).toFixed(1)}%`
 }
 
 const parseQuotaMultiplierInput = (value: number | string | null | undefined): number | null => {
@@ -1368,6 +1535,7 @@ const parseQuotaMultiplierInput = (value: number | string | null | undefined): n
 }
 
 const openQuotaMultiplierDialog = (subscription: UserSubscription) => {
+  if (subscription.status === 'revoked') return
   editingQuotaSubscription.value = subscription
   quotaMultiplierForm.value = subscription.quota_multiplier ?? 1
   showQuotaMultiplierDialog.value = true
@@ -1424,7 +1592,12 @@ const subscriptionGroupOptions = computed(() =>
       description: g.description,
       platform: g.platform,
       subscriptionType: g.subscription_type,
-      rate: g.rate_multiplier
+      rate: g.rate_multiplier,
+      peakRateEnabled: g.peak_rate_enabled,
+      peakStart: g.peak_start,
+      peakEnd: g.peak_end,
+      peakRateMultiplier: g.peak_rate_multiplier,
+      peakRateWindows: g.peak_rate_windows
     }))
 )
 
@@ -1635,6 +1808,7 @@ const closeAssignModal = () => {
   assignForm.validity_days = 30
   assignQuotaMultiplierEnabled.value = false
   assignQuotaMultiplier.value = null
+  resetAssignQuotaState()
   // Clear user search state
   selectedUser.value = null
   userSearchKeyword.value = ''
@@ -1680,6 +1854,7 @@ const handleAssignSubscription = async () => {
       const successIds = new Set(result.subscriptions.map((subscription) => subscription.user_id))
       assignUsers.value = assignUsers.value.filter((user) => !successIds.has(user.id))
       if (result.success_count > 0) {
+        invalidateAssignQuotaDefaults(assignForm.group_id)
         appStore.showSuccess(t('admin.subscriptions.batchAssign.result', { success: result.success_count, failed: result.failed_count }))
         await loadSubscriptions()
       }
@@ -1692,6 +1867,7 @@ const handleAssignSubscription = async () => {
       ...(quotaMultiplier === null ? {} : { quota_multiplier: quotaMultiplier })
     })
     appStore.showSuccess(t('admin.subscriptions.subscriptionAssigned'))
+    invalidateAssignQuotaDefaults(assignForm.group_id)
     submitting.value = false
     closeAssignModal()
     loadSubscriptions()
@@ -1965,7 +2141,7 @@ onUnmounted(() => {
 }
 
 .usage-label {
-  @apply w-10 flex-shrink-0 text-xs font-medium text-gray-500 dark:text-gray-400;
+  @apply w-10 flex-shrink-0 whitespace-nowrap text-xs font-medium text-gray-500 dark:text-gray-400;
 }
 
 .usage-amount {

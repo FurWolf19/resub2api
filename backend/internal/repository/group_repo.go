@@ -114,7 +114,7 @@ func createGroupRecord(ctx context.Context, client *dbent.Client, groupIn *servi
 		SetNillableDailyLimitUsd(groupIn.DailyLimitUSD).
 		SetNillableWeeklyLimitUsd(groupIn.WeeklyLimitUSD).
 		SetNillableMonthlyLimitUsd(groupIn.MonthlyLimitUSD).
-		SetNillableFiveHourLimitUsd(groupIn.FiveHourLimitUSD).
+		SetNillableFiveHourLimitUsd(service.NormalizeFiveHourLimitUSD(groupIn.FiveHourLimitUSD)).
 		SetAllowImageGeneration(groupIn.AllowImageGeneration).
 		SetAllowBatchImageGeneration(groupIn.AllowBatchImageGeneration).
 		SetImageCountBilling(groupIn.ImageCountBilling).
@@ -309,7 +309,7 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 		SetNillableDailyLimitUsd(groupIn.DailyLimitUSD).
 		SetNillableWeeklyLimitUsd(groupIn.WeeklyLimitUSD).
 		SetNillableMonthlyLimitUsd(groupIn.MonthlyLimitUSD).
-		SetNillableFiveHourLimitUsd(groupIn.FiveHourLimitUSD).
+		SetNillableFiveHourLimitUsd(service.NormalizeFiveHourLimitUSD(groupIn.FiveHourLimitUSD)).
 		SetAllowImageGeneration(groupIn.AllowImageGeneration).
 		SetAllowBatchImageGeneration(groupIn.AllowBatchImageGeneration).
 		SetImageCountBilling(groupIn.ImageCountBilling).
@@ -372,8 +372,8 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 	} else {
 		builder = builder.ClearMonthlyLimitUsd()
 	}
-	if groupIn.FiveHourLimitUSD != nil {
-		builder = builder.SetFiveHourLimitUsd(*groupIn.FiveHourLimitUSD)
+	if normalized := service.NormalizeFiveHourLimitUSD(groupIn.FiveHourLimitUSD); normalized != nil {
+		builder = builder.SetFiveHourLimitUsd(*normalized)
 	} else {
 		builder = builder.ClearFiveHourLimitUsd()
 	}

@@ -887,3 +887,32 @@ describe('PaymentView subscription feature flag', () => {
     wrapper.unmount()
   })
 })
+
+describe('PaymentView subscription plan limits', () => {
+  it('hides zero limits in the selected plan detail and shows unlimited', async () => {
+    const wrapper = await mountSubscriptionConfirm({
+      plan: {
+        five_hour_limit_usd: 0,
+        daily_limit_usd: 0,
+        weekly_limit_usd: 0,
+        monthly_limit_usd: 0,
+      },
+    })
+    const html = wrapper.html()
+
+    expect(html).toContain('payment.planCard.unlimited')
+    expect(html).not.toContain('payment.planCard.fiveHourLimit')
+    expect(html).not.toContain('$0')
+  })
+
+  it('does not render $0 for a zero five-hour limit', async () => {
+    const wrapper = await mountSubscriptionConfirm({
+      plan: { five_hour_limit_usd: 0, daily_limit_usd: 10 },
+    })
+    const html = wrapper.html()
+
+    expect(html).toContain('$10')
+    expect(html).toContain('payment.planCard.dailyLimit')
+    expect(html).not.toContain('payment.planCard.fiveHourLimit')
+  })
+})

@@ -1030,8 +1030,19 @@ export default {
       rateDeleted: 'Rate multiplier removed',
       rateAdded: 'Rate multiplier added',
       clearAll: 'Clear All',
-      confirmClearAll: 'Are you sure you want to clear all rate multiplier settings for this group? This cannot be undone.',
+      confirmClearAll:
+        'Clear all rate multiplier and quota multiplier settings for this group? Changes take effect after saving and cannot be undone.',
       rateCleared: 'All rate multipliers cleared',
+      rateMultiplierSaved: 'Rate multipliers saved',
+      rateMultiplierSaveFailed: 'Failed to save rate multipliers',
+      quotaMultiplierSaved: 'Quota multipliers saved',
+      quotaMultiplierSaveFailed: 'Failed to save quota multipliers',
+      quotaMultiplierLoadFailed:
+        'Failed to load quota multipliers. Quota editing is disabled, but rate multipliers can still be managed.',
+      retryLoad: 'Retry',
+      quotaMultiplierRange: 'Quota multiplier must be a number between 0 and 1',
+      quotaMultiplierDefaultBadge: 'Default (pending assignment)',
+      quotaMultiplierEffectiveBadge: 'Active',
       batchAdjust: 'Batch Adjust Rates',
       multiplierFactor: 'Factor',
       applyMultiplier: 'Apply',
@@ -1042,7 +1053,9 @@ export default {
       quotaMultiplierPlaceholder: '1.0',
       quotaMultiplierUnset: 'Not set',
       quotaMultiplierDefaultHint:
-        'This user has no active subscription; the value is saved as the default for the next assignment',
+        'This user has no active subscription. This value only prefills the assignment dialog and is not applied automatically to new subscriptions.',
+      quotaMultiplierClearHint:
+        'Clearing resets this subscription to 100% (1.0); the default quota multiplier is not applied',
       finalRate: 'Final Rate',
       unsavedChanges: 'Unsaved changes',
       revertChanges: 'Revert',
@@ -1080,7 +1093,8 @@ export default {
         monthlyLimit: 'Monthly Limit (USD)',
         defaultValidityDays: 'Default Validity (Days)',
         validityHint: 'Number of days the subscription is valid when assigned to a user',
-        noLimit: 'No limit'
+        noLimit: 'No limit',
+        baseLimitHint: 'Base limits; actual limits are scaled by the subscription quota multiplier'
       },
       imagePricing: {
         title: 'Image Generation Pricing',
@@ -1157,6 +1171,7 @@ export default {
         advanced: 'Advanced',
         effectiveDays: 'Effective days',
         everyDay: 'Every day',
+        daysUnset: 'Not set',
         weekdaysOnly: 'Weekdays only',
         weekendsOnly: 'Weekends only',
         custom: 'Custom',

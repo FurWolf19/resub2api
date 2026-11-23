@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
-import { getExpirationDateRelation, getRemainingExpiryDuration } from '../subscriptionQuota'
+import {
+  getExpirationDateRelation,
+  getRemainingExpiryDuration,
+  hasPositiveLimit
+} from '../subscriptionQuota'
 
 describe('subscription expiry timing', () => {
   it('uses local calendar dates for today and tomorrow', () => {
@@ -60,5 +64,20 @@ describe('subscription expiry timing', () => {
       unit: 'days',
       days: 2
     })
+  })
+})
+
+describe('subscription quota limit visibility', () => {
+  it('treats zero, negative, NaN, null and undefined limits as unset', () => {
+    expect(hasPositiveLimit(0)).toBe(false)
+    expect(hasPositiveLimit(-1)).toBe(false)
+    expect(hasPositiveLimit(Number.NaN)).toBe(false)
+    expect(hasPositiveLimit(null)).toBe(false)
+    expect(hasPositiveLimit(undefined)).toBe(false)
+  })
+
+  it('treats finite positive limits as configured', () => {
+    expect(hasPositiveLimit(0.01)).toBe(true)
+    expect(hasPositiveLimit(5)).toBe(true)
   })
 })

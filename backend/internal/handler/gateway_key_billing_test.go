@@ -188,6 +188,41 @@ func TestBuildKeyBillingInfoAppliesPeakMultiplier(t *testing.T) {
 	}
 }
 
+func TestBuildKeyBillingInfoReturnsAllPeakWindowsAndSecondWindowApplied(t *testing.T) {
+	groupID := int64(7)
+	windows := []service.PeakRateWindow{
+		{Start: "09:00", End: "10:00", Multiplier: 1.5},
+		{Start: "15:00", End: "16:00", Multiplier: 3},
+	}
+	apiKey := &service.APIKey{
+		GroupID: &groupID,
+		Group: &service.Group{
+			ID:                 groupID,
+			RateMultiplier:     1,
+			SubscriptionType:   service.SubscriptionTypeSubscription,
+			PeakRateEnabled:    true,
+			PeakStart:          "09:00",
+			PeakEnd:            "10:00",
+			PeakRateMultiplier: 1.5,
+			PeakRateWindows:    windows,
+		},
+	}
+	now := time.Date(2026, time.July, 12, 15, 30, 0, 0, timezone.Location())
+
+	got := buildKeyBillingInfo(apiKey, apiKey.Group.RateMultiplier, now)
+
+	require.Equal(t, windows, got.PeakRateWindows)
+	require.NotNil(t, got.AppliedPeakMultiplier)
+	require.Equal(t, 3.0, *got.AppliedPeakMultiplier)
+	require.Equal(t, 3.0, got.EffectiveRateMultiplier)
+
+	encoded, err := json.Marshal(got)
+	require.NoError(t, err)
+	var fields map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(encoded, &fields))
+	require.Contains(t, fields, "peak_rate_windows")
+}
+
 func TestKeyBillingInfoJSONKeepsZeroPeakMultiplierWhenEnabled(t *testing.T) {
 	groupID := int64(7)
 	apiKey := &service.APIKey{

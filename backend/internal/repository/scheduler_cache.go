@@ -1553,6 +1553,13 @@ func filterSchedulerExtra(extra map[string]any) map[string]any {
 		"openai_ws_force_http",
 		"openai_responses_mode",
 		"openai_responses_supported",
+		// 双协议能力与 compact 能力也会被转发/候选过滤直接读取：调度快照被
+		// 直接用于转发时，缺 openai_protocol_capabilities 会让 auto 只剩旧键
+		// 推断（把 Responses-only 上游误判为支持 Chat）；缺 compact 结论/覆盖
+		// 模式则会让 compact tier 全部退回 unknown，探针判不支持的账号仍可入选。
+		"openai_protocol_capabilities",
+		"openai_compact_supported",
+		"openai_compact_mode",
 		// 透传开关必须进投影：候选过滤(ListSchedulableAccounts)读的是本投影，
 		// 而 Account.IsModelSupported 靠 extra 上的这两个键短路 model_mapping 白名单。
 		// 裁掉它们，透传账号在选号阶段会退回按(常为过期的)白名单判定并被误判为
@@ -1636,6 +1643,9 @@ func filterSchedulerUpstreamBillingProbe(value any) map[string]any {
 		"peak_start",
 		"peak_end",
 		"peak_rate_multiplier",
+		// 多时段高峰以数组为准；裁掉后调度快照命中缓存时只剩首窗口旧字段，
+		// 第 2+ 窗口会被 upstreamBillingRateAt 当作平峰，选号/成本排序错误。
+		"peak_rate_windows",
 		"timezone",
 	} {
 		if field, exists := data[key]; exists && field != nil {

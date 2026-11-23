@@ -311,10 +311,11 @@ func matchesKnownZhipuNonAPIKeyDifference(tc routingMatrixCase, want, got routin
 }
 
 // OpenAI APIKey auto 模式已改为“跟随入站协议”：能力未知的 Chat Completions
-// 入站不再默认升级为 Responses。这是本次需求唯一允许的矩阵差异。
+// 入站不再默认升级为 Responses。probe=yes（Responses 已知支持、Chat 未知/推断
+// 支持）同样必须跟随入站。这是本次需求允许的矩阵差异之一。
 func matchesKnownOpenAIAutoInboundDifference(tc routingMatrixCase, want, got routingObservation) bool {
 	if tc.platform != PlatformOpenAI || tc.accountType != AccountTypeAPIKey ||
-		tc.mode != "" || tc.probe != "" || tc.ingress.name != "chat" {
+		tc.mode != "" || (tc.probe != "" && tc.probe != "yes") || tc.ingress.name != "chat" {
 		return false
 	}
 	if len(want.Requests) != 1 || len(got.Requests) != 1 {
@@ -330,6 +331,89 @@ func matchesKnownOpenAIAutoInboundDifference(tc routingMatrixCase, want, got rou
 	oldObs.Requests[0].URL, oldObs.Requests[0].BodyKind = "", ""
 	newObs.Requests[0].URL, newObs.Requests[0].BodyKind = "", ""
 	return reflect.DeepEqual(oldObs, newObs)
+}
+
+// Cursor 形状（Responses body）发到 /v1/chat/completions 且最终上游为
+// Chat Completions 时，现在会先把 body 转成 messages 形状——无论账号是 auto、
+// adaptive/routesByModel 还是 force_chat_completions。旧版本只对部分账号转换，
+// 其余把 input 原样发给 Chat 上游。属于本次需求允许的矩阵差异之二。
+//
+// 白名单按实际实现收窄，避免未来 OAuth/SetupToken/非 Cursor 平台误转换被吞掉：
+//   - 仅 APIKey 账号参与该兼容转换；
+//   - OpenAI：mode 为空且 probe=no（Responses 能力明确不可用）。此时能力探测
+//     覆盖账号协议偏好、上游落 Chat Completions；probe 为空/yes 时 Responses
+//     形状入站会优先走 Responses，不产生该差异。
+//   - CN 多协议供应商：按入站协议分流，account_mode 与 probe 不影响该路径。
+//     Kimi/DeepSeek/MiniMax 提供原生 Responses 端点，显式 responses 不会落到
+//     Chat Completions；智谱无原生 Responses 端点，显式 responses 也会回退。
+//     显式 Anthropic 协议走 Anthropic 端点，不属于本差异。
+func matchesKnownOpenAIChatResponsesShapeConversionDifference(tc routingMatrixCase, want, got routingObservation) bool {
+	if tc.ingress.name != "chat_responses_shape" || tc.accountType != AccountTypeAPIKey {
+		return false
+	}
+	switch tc.platform {
+	case PlatformOpenAI:
+		if tc.mode != "" || tc.probe != "no" {
+			return false
+		}
+	case PlatformKimi, PlatformDeepseek, PlatformMiniMax:
+		switch tc.apiProtocol {
+		case "", APIProtocolAdaptive, APIProtocolChatCompletions, "invalid":
+		default:
+			return false
+		}
+	case PlatformZhipu:
+		switch tc.apiProtocol {
+		case "", APIProtocolAdaptive, APIProtocolChatCompletions, APIProtocolResponses, "invalid":
+		default:
+			return false
+		}
+	default:
+		return false
+	}
+	if len(want.Requests) != 1 || len(got.Requests) != 1 {
+		return false
+	}
+	oldReq, newReq := want.Requests[0], got.Requests[0]
+	if oldReq.URL != newReq.URL || !strings.HasSuffix(newReq.URL, "/chat/completions") {
+		return false
+	}
+	if oldReq.BodyKind != "input" || newReq.BodyKind != "messages" {
+		return false
+	}
+	oldObs, newObs := want, got
+	oldObs.Requests = append([]routingUpstreamRequest(nil), want.Requests...)
+	newObs.Requests = append([]routingUpstreamRequest(nil), got.Requests...)
+	oldObs.Requests[0].BodyKind, newObs.Requests[0].BodyKind = "", ""
+	return reflect.DeepEqual(oldObs, newObs)
+}
+
+func TestCursorResponsesShapeConversionPreservesInputText(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ingress := routingMatrixIngresses()[2] // chat_responses_shape
+	targets := []routingMatrixCase{
+		{platform: PlatformOpenAI, accountType: AccountTypeAPIKey, probe: "no", ingress: ingress, model: "gpt-5"},
+		{platform: PlatformZhipu, accountType: AccountTypeAPIKey, probe: "no", ingress: ingress, model: "glm-4.7"},
+		{platform: PlatformDeepseek, accountType: AccountTypeAPIKey, probe: "no", ingress: ingress, model: "deepseek-chat"},
+	}
+	for _, tc := range targets {
+		t.Run(tc.platform, func(t *testing.T) {
+			upstream := &httpUpstreamRecorder{err: errors.New("stop after capture")}
+			svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream}
+			body := tc.body()
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodPost, tc.ingress.path, bytes.NewReader(body))
+			c.Request.Header.Set("Content-Type", "application/json")
+
+			_ = tc.ingress.forward(svc, c, tc.account(), body)
+
+			require.Len(t, upstream.requests, 1)
+			require.True(t, strings.HasSuffix(upstream.requests[0].URL.Path, "/chat/completions"))
+			require.Equal(t, "hello", gjson.GetBytes(upstream.bodies[0], "messages.0.content").String(),
+				"Cursor responses-shape conversion must preserve the original input text in messages")
+		})
+	}
 }
 
 func TestUpstreamProtocolRoutingMatrixMatchesMainGolden(t *testing.T) {
@@ -348,6 +432,7 @@ func TestUpstreamProtocolRoutingMatrixMatchesMainGolden(t *testing.T) {
 	mismatched := 0
 	knownDifferences := 0
 	knownAutoInboundDifferences := 0
+	knownChatResponsesShapeDifferences := 0
 	for i, tc := range cases {
 		index := golden.Results[i]
 		require.GreaterOrEqual(t, index, 0)
@@ -365,6 +450,10 @@ func TestUpstreamProtocolRoutingMatrixMatchesMainGolden(t *testing.T) {
 			knownAutoInboundDifferences++
 			continue
 		}
+		if matchesKnownOpenAIChatResponsesShapeConversionDifference(tc, want, got) {
+			knownChatResponsesShapeDifferences++
+			continue
+		}
 		mismatched++
 		if len(differences) < 12 {
 			differences = append(differences, fmt.Sprintf("%s\nmain: %s\ncurrent: %s", tc.key(), want, got))
@@ -374,5 +463,6 @@ func TestUpstreamProtocolRoutingMatrixMatchesMainGolden(t *testing.T) {
 	// 2 account types × 4 modes × 3 probe states × 4 address configurations ×
 	// 2 model spellings. A disappeared or expanded exception requires review.
 	require.Equal(t, 192, knownDifferences, "unexpected change to the declared Zhipu non-API-Key difference")
-	require.Equal(t, 48, knownAutoInboundDifferences, "unexpected change to the declared OpenAI auto inbound difference")
+	require.Equal(t, 96, knownAutoInboundDifferences, "unexpected change to the declared OpenAI auto inbound difference")
+	require.Equal(t, 1296, knownChatResponsesShapeDifferences, "unexpected change to the declared Cursor responses-shape conversion difference")
 }

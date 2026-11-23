@@ -706,7 +706,8 @@ export default {
         extendHint: 'Enter a positive whole number to extend or a negative one to shorten, up to 36500 days. Expired subscriptions are extended from now and cannot be shortened. The new expiration must be in the future.',
         invalidDays: 'Enter a nonzero whole number of days between -36500 and 36500',
         resetWindows: 'Select quota windows to reset',
-        resetHint: 'Usage in the selected windows will be zeroed and restarted from today.',
+        resetHint:
+          'Usage in the selected windows will be zeroed. Daily/weekly/monthly windows restart immediately; the 5-hour window is cleared and restarts on the next billable request.',
         selectWindow: 'Select at least one quota window',
         revokeHint: 'These subscriptions will no longer be usable. You can restore them later from the revoked list.',
         restoreHint: 'These subscriptions will be enabled again. Subscriptions whose original validity has ended will be restored as expired.',
@@ -784,7 +785,8 @@ export default {
       resetQuota: 'Reset Quota',
       resettingQuota: 'Resetting...',
       resetQuotaTitle: 'Reset Usage Quota',
-      resetQuotaConfirm: "Select the usage windows to reset for '{user}'. Selected windows will be zeroed and restarted.",
+      resetQuotaConfirm:
+        "Choose the quota windows to reset for '{user}'. Daily/weekly/monthly windows restart immediately; the 5-hour window restarts on the next billable request.",
       quotaResetSuccess: 'Quota reset successfully',
       failedToResetQuota: 'Failed to reset quota',
       noSubscriptionsYet: 'No subscriptions yet',
@@ -806,6 +808,9 @@ export default {
       assignQuotaMultiplier: 'Assign quota by multiplier',
       assignQuotaMultiplierHint:
         'When enabled, quota is assigned at the selected ratio. 0.5 = 50%; bulk assignment applies one value to all selected users.',
+      defaultBadge: 'Default',
+      defaultQuotaMultiplierHint:
+        'The selected user(s) have no active subscription. The group default quota multiplier is {percent}; it is applied only when this option is enabled.',
       quotaMultiplier: 'Quota multiplier',
       quotaMultiplierPlaceholder: '0 ~ 1',
       quotaMultiplierHint:
@@ -815,6 +820,8 @@ export default {
       failedToSaveQuotaMultiplier: 'Failed to save quota multiplier',
       editQuotaMultiplier: 'Edit quota multiplier',
       editQuotaMultiplierTitle: 'Edit Quota Multiplier',
+      quotaMultiplierRevokedHint:
+        'Quota multiplier cannot be edited for a revoked subscription; restore it first',
       revokeConfirm:
         "Are you sure you want to revoke the subscription for '{user}'? You can restore it later from the revoked list.",
       restoreConfirm:

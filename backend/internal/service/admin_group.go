@@ -439,7 +439,7 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 	dailyLimit := normalizeLimit(input.DailyLimitUSD)
 	weeklyLimit := normalizeLimit(input.WeeklyLimitUSD)
 	monthlyLimit := normalizeLimit(input.MonthlyLimitUSD)
-	fiveHourLimit := normalizeLimit(input.FiveHourLimitUSD)
+	fiveHourLimit := NormalizeFiveHourLimitUSD(input.FiveHourLimitUSD)
 
 	// 图片价格：负数表示清除（使用默认价格），0 保留（表示免费）
 	imagePrice1K := normalizePrice(input.ImagePrice1K)
@@ -496,9 +496,11 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 	var peakStart, peakEnd string
 	if input.PeakRateWindowsSet {
 		// 新 API：以 windows 为准，旧字段忽略；保存时把第一个窗口同步回旧字段。
+		// 只有 enabled=true 才把窗口数组视为生效配置并严格校验；
+		// enabled=false（或非订阅分组）创建时一律清空窗口，避免未启用的配置落库。
 		peakRateEnabled = input.PeakRateEnabled && subscriptionType == SubscriptionTypeSubscription
-		peakRateWindows = NormalizePeakRateWindows(subscriptionType, peakRateEnabled, input.PeakRateWindows)
 		if peakRateEnabled {
+			peakRateWindows = NormalizePeakRateWindows(subscriptionType, true, input.PeakRateWindows)
 			if len(peakRateWindows) == 0 {
 				return nil, infraerrors.BadRequest("INVALID_PEAK_RATE_CONFIG", "peak_rate_enabled 为 true 时必须至少配置一个高峰时段")
 			}
@@ -508,6 +510,7 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 			first := peakRateWindows[0]
 			peakStart, peakEnd, peakRateMultiplier = first.Start, first.End, first.Multiplier
 		} else {
+			peakRateWindows = nil
 			peakStart, peakEnd, peakRateMultiplier = "", "", 1.0
 		}
 	} else {
@@ -711,7 +714,8 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 	return group, nil
 }
 
-// normalizeLimit 将负数转换为 nil（表示无限制），0 保留（表示限额为零）
+// normalizeLimit 将负数转换为 nil（表示无限制），0 保留（表示限额为零）。
+// 5h 限额语义不同（0 也视为无限制），使用 NormalizeFiveHourLimitUSD。
 func normalizeLimit(limit *float64) *float64 {
 	if limit == nil || *limit < 0 {
 		return nil
@@ -868,7 +872,7 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 		group.MonthlyLimitUSD = normalizeLimit(input.MonthlyLimitUSD)
 	}
 	if input.FiveHourLimitUSD != nil {
-		group.FiveHourLimitUSD = normalizeLimit(input.FiveHourLimitUSD)
+		group.FiveHourLimitUSD = NormalizeFiveHourLimitUSD(input.FiveHourLimitUSD)
 	}
 	// 图片生成计费配置：负数表示清除（使用默认价格）
 	if input.AllowImageGeneration != nil {
@@ -922,6 +926,8 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 		}
 		group.VideoRateMultiplier = *input.VideoRateMultiplier
 	}
+	// 停用高峰的新前端会同时提交清空后的旧字段；先记录库内值，停用时无保留窗口则还原。
+	storedPeakStart, storedPeakEnd, storedPeakMultiplier := group.PeakStart, group.PeakEnd, group.PeakRateMultiplier
 	if input.PeakRateEnabled != nil {
 		group.PeakRateEnabled = *input.PeakRateEnabled
 	}
@@ -934,23 +940,48 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	if input.PeakRateMultiplier != nil {
 		group.PeakRateMultiplier = *input.PeakRateMultiplier
 	}
+	// 从数据库读出的存量窗口可能来自旧版本（如 "9:00"）：先格式化为严格
+	// "HH:MM" 再做后续合并与校验。此处只处理存量数组，新 API 显式提交的
+	// input.PeakRateWindows 稍后按严格格式校验，不做宽松归一化。
+	group.PeakRateWindows = NormalizeStoredPeakRateWindows(group.PeakRateWindows)
 	if input.PeakRateWindowsSet {
 		// 新 API：以 windows 为准，旧字段输入忽略；第一个窗口同步回旧字段。
+		// 只有 enabled=true 才校验并替换窗口数组；订阅分组 disabled 时忽略本次
+		// 提交的窗口（包括空数组），保留数据库已有配置，避免前端停用保存丢配置。
 		group.PeakRateEnabled = group.PeakRateEnabled && group.SubscriptionType == SubscriptionTypeSubscription
-		group.PeakRateWindows = NormalizePeakRateWindows(group.SubscriptionType, group.PeakRateEnabled, input.PeakRateWindows)
-		if group.PeakRateEnabled {
-			if len(group.PeakRateWindows) == 0 {
+		switch {
+		case group.PeakRateEnabled:
+			candidate := NormalizePeakRateWindows(group.SubscriptionType, true, input.PeakRateWindows)
+			if len(candidate) == 0 {
 				return nil, infraerrors.BadRequest("INVALID_PEAK_RATE_CONFIG", "peak_rate_enabled 为 true 时必须至少配置一个高峰时段")
 			}
-			if err := ValidatePeakRateWindows(group.PeakRateWindows); err != nil {
+			if err := ValidatePeakRateWindows(candidate); err != nil {
 				return nil, infraerrors.BadRequest("INVALID_PEAK_RATE_CONFIG", err.Error())
 			}
+			group.PeakRateWindows = candidate
 			first := group.PeakRateWindows[0]
 			group.PeakStart, group.PeakEnd, group.PeakRateMultiplier = first.Start, first.End, first.Multiplier
-		} else {
+		case group.SubscriptionType != SubscriptionTypeSubscription:
+			group.PeakRateWindows = nil
 			group.PeakStart, group.PeakEnd, group.PeakRateMultiplier = "", "", 1.0
+		default:
+			// 订阅 + disabled：忽略本次提交的窗口与旧字段，保留数据库已有配置；
+			// 已有窗口时用第一个窗口回填旧字段，避免新前端停用后旧客户端读到空配置。
+			if len(group.PeakRateWindows) > 0 {
+				first := group.PeakRateWindows[0]
+				group.PeakStart, group.PeakEnd, group.PeakRateMultiplier = first.Start, first.End, first.Multiplier
+			} else {
+				group.PeakStart, group.PeakEnd, group.PeakRateMultiplier = storedPeakStart, storedPeakEnd, storedPeakMultiplier
+			}
 		}
+		// 订阅 + disabled：忽略 input.PeakRateWindows，保留已有窗口与旧字段，不校验。
 	} else {
+		// 旧 API 只带开关且已有窗口时，先用窗口回填旧字段，再做合并校验；
+		// 历史旧字段可能为空或非法，不应阻塞重新启用合法窗口。
+		if group.PeakRateEnabled && input.PeakStart == nil && input.PeakEnd == nil && input.PeakRateMultiplier == nil && len(group.PeakRateWindows) > 0 {
+			first := group.PeakRateWindows[0]
+			group.PeakStart, group.PeakEnd, group.PeakRateMultiplier = first.Start, first.End, first.Multiplier
+		}
 		// 先归一化（非订阅分组——含本次更新转为非订阅——静默清空高峰配置，清洗停用状态下的脏字段），
 		// 再收敛校验：Update 可能只传部分 peak 字段，需对合并后的最终配置统一校验，
 		// 防止单独修改 start/end 导致最终 start>=end 等非法配置入库。与 CreateGroup 同一收口。
@@ -959,16 +990,23 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 			return nil, infraerrors.BadRequest("INVALID_PEAK_RATE_CONFIG", err.Error())
 		}
 		// 未传 windows 时：
-		//   - 本次显式修改了旧时段字段 → 用合并后的旧字段重建单窗口，保持新旧一致；
-		//   - 否则保留已有多窗口配置（例如旧前端只改描述，不应清空新配置）；
+		//   - 本次显式修改了旧时段字段且 enabled=true → 用合并后的旧字段重建单窗口；
+		//   - enabled=true 且数组为空 → 用旧字段补一个窗口；
+		//   - enabled=false → 数组保持原值，不用旧字段绕过“停用保留已有配置”；
 		//   - 转为非订阅分组 → 清空。
 		switch {
 		case group.SubscriptionType != SubscriptionTypeSubscription:
 			group.PeakRateWindows = nil
-		case input.PeakStart != nil || input.PeakEnd != nil || input.PeakRateMultiplier != nil:
+		case group.PeakRateEnabled && (input.PeakStart != nil || input.PeakEnd != nil || input.PeakRateMultiplier != nil):
 			group.PeakRateWindows = peakRateWindowsFromLegacyConfig(group.PeakStart, group.PeakEnd, group.PeakRateMultiplier)
 		case group.PeakRateEnabled && len(group.PeakRateWindows) == 0:
 			group.PeakRateWindows = peakRateWindowsFromLegacyConfig(group.PeakStart, group.PeakEnd, group.PeakRateMultiplier)
+		}
+		// 只有启用状态才校验数组；停用状态允许保留历史非法窗口，重新启用时再拒绝。
+		if group.PeakRateEnabled {
+			if err := ValidatePeakRateWindows(group.PeakRateWindows); err != nil {
+				return nil, infraerrors.BadRequest("INVALID_PEAK_RATE_CONFIG", err.Error())
+			}
 		}
 	}
 	if input.ProfitControlEnabled != nil {

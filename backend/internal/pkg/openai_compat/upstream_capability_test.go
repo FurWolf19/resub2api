@@ -119,8 +119,8 @@ func TestResolveProtocolCapabilitiesLegacyKeys(t *testing.T) {
 		if !got.Supports(ProtocolResponses) {
 			t.Fatal("legacy true must mean responses supported")
 		}
-		if got.ChatCompletions.Known {
-			t.Fatal("legacy true must leave chat_completions unknown")
+		if !got.Supports(ProtocolChatCompletions) {
+			t.Fatal("legacy true must infer chat_completions support to avoid eternal NeedsRefresh")
 		}
 	})
 	t.Run("legacy unsupported", func(t *testing.T) {
@@ -145,6 +145,27 @@ func TestResolveProtocolCapabilitiesLegacyKeys(t *testing.T) {
 	})
 }
 
+func TestProtocolCapabilitiesLegacyStampMissingProbedAt(t *testing.T) {
+	now := time.Date(2026, 11, 8, 10, 0, 0, 0, time.UTC)
+	caps := ResolveProtocolCapabilities(map[string]any{ExtraKeyResponsesSupported: true})
+	if caps.NeedsRefresh(now) {
+		t.Fatal("complete legacy capability must be treated as just probed before stamping")
+	}
+	stamped, changed := caps.StampMissingProbedAt(now)
+	if !changed {
+		t.Fatal("legacy capability without probed_at must be stamped")
+	}
+	if stamped.NeedsRefresh(now) {
+		t.Fatal("stamped legacy capability must not need refresh")
+	}
+	if !stamped.NeedsRefresh(now.Add(ProtocolCapabilityTTL + time.Minute)) {
+		t.Fatal("stamped legacy capability must expire after TTL")
+	}
+	if _, changedAgain := stamped.StampMissingProbedAt(now.Add(time.Minute)); changedAgain {
+		t.Fatal("stamped capabilities must not be stamped again")
+	}
+}
+
 func TestProtocolCapabilitiesChooseProtocol(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -158,12 +179,15 @@ func TestProtocolCapabilitiesChooseProtocol(t *testing.T) {
 		{"both supported follows inbound cc", ProtocolCapabilities{
 			Responses: ProtocolCapability{Known: true, Supported: true}, ChatCompletions: ProtocolCapability{Known: true, Supported: true},
 		}, ProtocolChatCompletions, ProtocolChatCompletions},
-		{"responses inbound only cc supported", ProtocolCapabilities{
+		{"responses inbound unknown other supported stays responses", ProtocolCapabilities{
 			ChatCompletions: ProtocolCapability{Known: true, Supported: true},
-		}, ProtocolResponses, ProtocolChatCompletions},
-		{"cc inbound only responses supported", ProtocolCapabilities{
+		}, ProtocolResponses, ProtocolResponses},
+		{"cc inbound unknown other supported stays cc", ProtocolCapabilities{
 			Responses: ProtocolCapability{Known: true, Supported: true},
-		}, ProtocolChatCompletions, ProtocolResponses},
+		}, ProtocolChatCompletions, ProtocolChatCompletions},
+		{"inbound unsupported uses other supported", ProtocolCapabilities{
+			Responses: ProtocolCapability{Known: true, Supported: false}, ChatCompletions: ProtocolCapability{Known: true, Supported: true},
+		}, ProtocolResponses, ProtocolChatCompletions},
 		{"unknown follows inbound responses", ProtocolCapabilities{}, ProtocolResponses, ProtocolResponses},
 		{"unknown follows inbound cc", ProtocolCapabilities{}, ProtocolChatCompletions, ProtocolChatCompletions},
 		{"inbound unsupported uses other even if unknown", ProtocolCapabilities{
@@ -179,5 +203,20 @@ func TestProtocolCapabilitiesChooseProtocol(t *testing.T) {
 				t.Fatalf("ChooseProtocol(%q) = %q, want %q", tc.inbound, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestProtocolCapabilitiesToExtraPreservesNanosecondProbedAt(t *testing.T) {
+	probedAt := time.Date(2026, 11, 9, 10, 0, 0, 123456789, time.UTC)
+	caps := ProtocolCapabilities{
+		Responses:       ProtocolCapability{Known: true, Supported: false, ProbedAt: probedAt},
+		ChatCompletions: ProtocolCapability{Known: true, Supported: true, ProbedAt: probedAt.Add(time.Millisecond)},
+	}
+	got := ResolveProtocolCapabilities(map[string]any{ExtraKeyProtocolCapabilities: caps.ToExtra()})
+	if !got.Responses.ProbedAt.Equal(probedAt) {
+		t.Fatalf("responses probed_at = %v, want %v", got.Responses.ProbedAt, probedAt)
+	}
+	if !got.ChatCompletions.ProbedAt.Equal(probedAt.Add(time.Millisecond)) {
+		t.Fatalf("chat probed_at = %v, want %v", got.ChatCompletions.ProbedAt, probedAt.Add(time.Millisecond))
 	}
 }

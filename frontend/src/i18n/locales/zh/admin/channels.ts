@@ -706,7 +706,8 @@ export default {
         extendHint: '正整数延长，负整数缩短，最多调整 36500 天。已过期订阅从当前时间起延长，不能缩短；缩短后的到期时间必须在未来。',
         invalidDays: '请输入 -36500 到 36500 之间的非零整数天数',
         resetWindows: '选择要重置的配额窗口',
-        resetHint: '所选窗口的用量将归零，并从今天开始重新计算。',
+        resetHint:
+          '所选窗口的用量将归零。日/周/月窗口会立即重新计算；5 小时窗口会被清除，下一笔消费重新计时。',
         selectWindow: '请至少选择一个配额窗口',
         revokeHint: '撤销后这些订阅将无法继续使用，可稍后在已撤销列表中恢复。',
         restoreHint: '恢复后将重新启用这些订阅。原有效期已结束的订阅将显示为已过期。',
@@ -784,7 +785,8 @@ export default {
       resetQuota: '重置配额',
       resettingQuota: '重置中...',
       resetQuotaTitle: '重置用量配额',
-      resetQuotaConfirm: "选择要为 '{user}' 重置的用量窗口，所选窗口的用量将归零并重新计算。",
+      resetQuotaConfirm:
+        "选择要为 '{user}' 重置的用量窗口；日/周/月窗口会立即重新计算，5 小时窗口会在下一笔消费时重新计时。",
       quotaResetSuccess: '配额重置成功',
       failedToResetQuota: '重置配额失败',
       noSubscriptionsYet: '暂无订阅',
@@ -806,6 +808,9 @@ export default {
       assignQuotaMultiplier: '按倍率分配额度',
       assignQuotaMultiplierHint:
         '勾选后按所选比例分配额度。0.5 = 50%；批量分配时同一倍率应用到所有选中用户。',
+      defaultBadge: '默认',
+      defaultQuotaMultiplierHint:
+        '该用户（或所选用户）无有效订阅，分组默认额度倍率为 {percent}。勾选后本次分配才会应用。',
       quotaMultiplier: '额度倍率',
       quotaMultiplierPlaceholder: '0 ~ 1',
       quotaMultiplierHint: '有效限额 = 分组限额 × 额度倍率。范围 0 ~ 1，0.5 表示 50%。',
@@ -814,6 +819,7 @@ export default {
       failedToSaveQuotaMultiplier: '保存额度倍率失败',
       editQuotaMultiplier: '编辑额度倍率',
       editQuotaMultiplierTitle: '编辑额度倍率',
+      quotaMultiplierRevokedHint: '已撤销订阅不可编辑额度倍率；恢复订阅后可编辑',
       revokeConfirm: "确定要撤销 '{user}' 的订阅吗？可稍后在已撤销列表中恢复。",
       restoreConfirm: "确定要恢复 '{user}' 的订阅吗？如果原订阅已过期，恢复后将显示为已过期。",
       guide: {

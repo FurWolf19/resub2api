@@ -1238,6 +1238,12 @@ func rawChatCompletionsTestAccount() *Account {
 		},
 		Extra: map[string]any{
 			openai_compat.ExtraKeyResponsesSupported: true,
+			// 该 helper 代表“仅支持 Responses”的上游，显式声明 Chat 不支持，
+			// 使 Chat 入站仍走 Responses 转换链；auto 模式下未知 Chat 会跟随入站。
+			openai_compat.ExtraKeyProtocolCapabilities: map[string]any{
+				openai_compat.ProtocolResponses:       map[string]any{"supported": true},
+				openai_compat.ProtocolChatCompletions: map[string]any{"supported": false},
+			},
 		},
 	}
 }

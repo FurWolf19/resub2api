@@ -16,6 +16,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/model"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	"github.com/cespare/xxhash/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -46,9 +47,47 @@ func (r *tempUnschedulableOpenAIAccountRepo) SetModelRateLimit(_ context.Context
 type snapshotUpdateAccountRepo struct {
 	stubOpenAIAccountRepo
 	updateExtraCalls chan map[string]any
+	mergeCalls       chan []OpenAIProtocolCapabilityPatch
 }
 
 func (r *snapshotUpdateAccountRepo) UpdateExtra(ctx context.Context, id int64, updates map[string]any) error {
+	if r.updateExtraCalls != nil {
+		copied := make(map[string]any, len(updates))
+		for k, v := range updates {
+			copied[k] = v
+		}
+		r.updateExtraCalls <- copied
+	}
+	return nil
+}
+
+func (r *snapshotUpdateAccountRepo) MergeOpenAIProtocolCapabilities(_ context.Context, accountID int64, patches []OpenAIProtocolCapabilityPatch) error {
+	if r.mergeCalls != nil {
+		r.mergeCalls <- append([]OpenAIProtocolCapabilityPatch(nil), patches...)
+	}
+	var extra map[string]any
+	for i := range r.accounts {
+		if r.accounts[i].ID == accountID {
+			extra = r.accounts[i].Extra
+			break
+		}
+	}
+	if extra == nil {
+		extra = make(map[string]any)
+	}
+	merged, legacy, _, err := MergeOpenAIProtocolCapabilities(openai_compat.ResolveProtocolCapabilities(extra), patches)
+	if err != nil {
+		return err
+	}
+	updates := map[string]any{
+		openai_compat.ExtraKeyProtocolCapabilities: merged.ToExtra(),
+	}
+	if legacy != nil {
+		updates[openai_compat.ExtraKeyResponsesSupported] = *legacy
+	}
+	for key, value := range updates {
+		extra[key] = value
+	}
 	if r.updateExtraCalls != nil {
 		copied := make(map[string]any, len(updates))
 		for k, v := range updates {

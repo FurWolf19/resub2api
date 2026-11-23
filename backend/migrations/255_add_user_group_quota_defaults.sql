@@ -8,3 +8,13 @@ CREATE TABLE IF NOT EXISTS user_group_quota_defaults (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (user_id, group_id)
 );
+
+-- 按分组查询弹窗条目；新表为空，加索引与约束都是安全且幂等的。
+CREATE INDEX IF NOT EXISTS idx_user_group_quota_defaults_group_id
+  ON user_group_quota_defaults(group_id);
+
+ALTER TABLE user_group_quota_defaults
+  DROP CONSTRAINT IF EXISTS user_group_quota_defaults_quota_multiplier_check;
+ALTER TABLE user_group_quota_defaults
+  ADD CONSTRAINT user_group_quota_defaults_quota_multiplier_check
+  CHECK (quota_multiplier >= 0 AND quota_multiplier <= 1);

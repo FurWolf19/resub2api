@@ -6,7 +6,7 @@ export default {
     peakRateTooltip: 'Peak rate: {window}',
     peakRateImageNote: '; image tokens billed as tokens are also affected, per-image billing is unaffected',
     peakRateMoreWindows: '{n} more windows',
-    peakRateWindowSeparator: ';',
+    peakRateWindowSeparator: '; ',
     peakRateDaySeparator: ', ',
     peakRateDays: {
       everyDay: 'Every day',

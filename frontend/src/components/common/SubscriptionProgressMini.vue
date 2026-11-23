@@ -72,8 +72,8 @@
 
               <!-- Progress bars for limited subscriptions -->
               <template v-else>
-                <div v-if="subscription.group?.five_hour_limit_usd" class="flex items-center gap-2">
-                  <span class="w-8 flex-shrink-0 text-[10px] text-gray-500">{{
+                <div v-if="hasPositiveLimit(subscription.group?.five_hour_limit_usd)" class="flex items-center gap-2">
+                  <span class="w-12 flex-shrink-0 whitespace-nowrap text-[10px] text-gray-500">{{
                     t('subscriptionProgress.fiveHour')
                   }}</span>
                   <div class="h-1.5 min-w-0 flex-1 rounded-full bg-gray-200 dark:bg-dark-600">
@@ -103,8 +103,8 @@
                   </span>
                 </div>
 
-                <div v-if="subscription.group?.daily_limit_usd" class="flex items-center gap-2">
-                  <span class="w-8 flex-shrink-0 text-[10px] text-gray-500">{{
+                <div v-if="hasPositiveLimit(subscription.group?.daily_limit_usd)" class="flex items-center gap-2">
+                  <span class="w-12 flex-shrink-0 whitespace-nowrap text-[10px] text-gray-500">{{
                     t('subscriptionProgress.daily')
                   }}</span>
                   <div class="h-1.5 min-w-0 flex-1 rounded-full bg-gray-200 dark:bg-dark-600">
@@ -134,8 +134,8 @@
                   </span>
                 </div>
 
-                <div v-if="subscription.group?.weekly_limit_usd" class="flex items-center gap-2">
-                  <span class="w-8 flex-shrink-0 text-[10px] text-gray-500">{{
+                <div v-if="hasPositiveLimit(subscription.group?.weekly_limit_usd)" class="flex items-center gap-2">
+                  <span class="w-12 flex-shrink-0 whitespace-nowrap text-[10px] text-gray-500">{{
                     t('subscriptionProgress.weekly')
                   }}</span>
                   <div class="h-1.5 min-w-0 flex-1 rounded-full bg-gray-200 dark:bg-dark-600">
@@ -165,8 +165,8 @@
                   </span>
                 </div>
 
-                <div v-if="subscription.group?.monthly_limit_usd" class="flex items-center gap-2">
-                  <span class="w-8 flex-shrink-0 text-[10px] text-gray-500">{{
+                <div v-if="hasPositiveLimit(subscription.group?.monthly_limit_usd)" class="flex items-center gap-2">
+                  <span class="w-12 flex-shrink-0 whitespace-nowrap text-[10px] text-gray-500">{{
                     t('subscriptionProgress.monthly')
                   }}</span>
                   <div class="h-1.5 min-w-0 flex-1 rounded-full bg-gray-200 dark:bg-dark-600">
@@ -221,7 +221,7 @@ import Icon from '@/components/icons/Icon.vue'
 import { useSubscriptionStore } from '@/stores'
 import { FeatureFlags, isFeatureFlagEnabled } from '@/utils/featureFlags'
 import type { UserSubscription } from '@/types'
-import { getExpirationDateRelation } from '@/utils/subscriptionQuota'
+import { getExpirationDateRelation, hasPositiveLimit } from '@/utils/subscriptionQuota'
 
 const { t } = useI18n()
 
@@ -270,10 +270,10 @@ function getMaxUsagePercentage(sub: UserSubscription): number {
 
 function isUnlimited(sub: UserSubscription): boolean {
   return (
-    !sub.group?.daily_limit_usd &&
-    !sub.group?.weekly_limit_usd &&
-    !sub.group?.monthly_limit_usd &&
-    !sub.group?.five_hour_limit_usd
+    !hasPositiveLimit(sub.group?.daily_limit_usd) &&
+    !hasPositiveLimit(sub.group?.weekly_limit_usd) &&
+    !hasPositiveLimit(sub.group?.monthly_limit_usd) &&
+    !hasPositiveLimit(sub.group?.five_hour_limit_usd)
   )
 }
 

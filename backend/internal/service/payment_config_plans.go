@@ -120,11 +120,11 @@ func (s *PaymentConfigService) GetGroupInfoMap(ctx context.Context, plans []*dbe
 			PeakStart:          g.PeakStart,
 			PeakEnd:            g.PeakEnd,
 			PeakRateMultiplier: g.PeakRateMultiplier,
-			PeakRateWindows:    g.PeakRateWindows,
+			PeakRateWindows:    NormalizeStoredPeakRateWindows(g.PeakRateWindows),
 			DailyLimitUSD:      g.DailyLimitUsd,
 			WeeklyLimitUSD:     g.WeeklyLimitUsd,
 			MonthlyLimitUSD:    g.MonthlyLimitUsd,
-			FiveHourLimitUSD:   g.FiveHourLimitUsd,
+			FiveHourLimitUSD:   NormalizeFiveHourLimitUSD(g.FiveHourLimitUsd),
 			ModelScopes:        g.SupportedModelScopes,
 			I18n:               g.I18n,
 		}

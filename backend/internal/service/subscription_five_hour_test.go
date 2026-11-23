@@ -108,3 +108,80 @@ func TestRenewedTermResetsFiveHourButKeepsQuotaMultiplier(t *testing.T) {
 	require.Zero(t, renewed.FiveHourUsageUSD)
 	require.Equal(t, 0.25, renewed.QuotaMultiplier)
 }
+
+func TestCalculateProgressIncludesFiveHourWithoutWindow(t *testing.T) {
+	now := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
+	fiveHour := 10.0
+	sub := &UserSubscription{
+		ID:              1,
+		ExpiresAt:       now.Add(10 * 24 * time.Hour),
+		QuotaMultiplier: 0.5,
+	}
+	group := &Group{Name: "g", FiveHourLimitUSD: &fiveHour}
+	svc := &SubscriptionService{now: func() time.Time { return now }}
+
+	progress := svc.calculateProgress(sub, group)
+	require.NotNil(t, progress.FiveHour, "仅有 5h 限额的新订阅也必须返回进度块")
+	require.Zero(t, progress.FiveHour.UsedUSD)
+	require.Equal(t, 5.0, progress.FiveHour.LimitUSD)
+	require.Equal(t, 5.0, progress.FiveHour.RemainingUSD)
+	require.Zero(t, progress.FiveHour.Percentage)
+	require.Zero(t, progress.FiveHour.ResetsInSeconds)
+	require.Nil(t, sub.FiveHourWindowStart, "只读进度计算不得写入 window_start")
+}
+
+func TestCalculateProgressTreatsExpiredFiveHourAsZero(t *testing.T) {
+	now := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
+	start := now.Add(-6 * time.Hour)
+	fiveHour := 10.0
+	sub := &UserSubscription{
+		ID:                  1,
+		ExpiresAt:           now.Add(10 * 24 * time.Hour),
+		QuotaMultiplier:     1,
+		FiveHourWindowStart: &start,
+		FiveHourUsageUSD:    8,
+	}
+	group := &Group{Name: "g", FiveHourLimitUSD: &fiveHour}
+	svc := &SubscriptionService{now: func() time.Time { return now }}
+
+	progress := svc.calculateProgress(sub, group)
+	require.NotNil(t, progress.FiveHour)
+	require.Zero(t, progress.FiveHour.UsedUSD, "过期 5h 窗口不应继续展示旧用量")
+	require.Equal(t, 10.0, progress.FiveHour.RemainingUSD)
+	require.Zero(t, progress.FiveHour.Percentage)
+	require.Zero(t, progress.FiveHour.ResetsInSeconds)
+	require.True(t, progress.FiveHour.ResetsAt.Equal(now))
+	require.True(t, progress.FiveHour.WindowStart.Equal(start), "只读展示不得改写 window_start")
+}
+
+func TestCalculateProgressKeepsActiveFiveHourUsage(t *testing.T) {
+	now := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
+	start := now.Add(-time.Hour)
+	fiveHour := 10.0
+	sub := &UserSubscription{
+		ID:                  1,
+		ExpiresAt:           now.Add(10 * 24 * time.Hour),
+		QuotaMultiplier:     1,
+		FiveHourWindowStart: &start,
+		FiveHourUsageUSD:    2,
+	}
+	group := &Group{Name: "g", FiveHourLimitUSD: &fiveHour}
+	svc := &SubscriptionService{now: func() time.Time { return now }}
+
+	progress := svc.calculateProgress(sub, group)
+	require.NotNil(t, progress.FiveHour)
+	require.Equal(t, 2.0, progress.FiveHour.UsedUSD)
+	require.Equal(t, 8.0, progress.FiveHour.RemainingUSD)
+}
+
+func TestCheckAllLimitsIncludesFiveHour(t *testing.T) {
+	fiveHour := 1.0
+	group := &Group{FiveHourLimitUSD: &fiveHour}
+	sub := &UserSubscription{FiveHourUsageUSD: 0.9}
+
+	daily, weekly, monthly, fiveHourOK := sub.CheckAllLimits(group, 0.2)
+	require.True(t, daily)
+	require.True(t, weekly)
+	require.True(t, monthly)
+	require.False(t, fiveHourOK)
+}

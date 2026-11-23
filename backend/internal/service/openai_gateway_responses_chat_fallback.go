@@ -135,7 +135,7 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 	if resp.StatusCode >= 400 {
 		respBody, upstreamMsg := s.readOpenAIUpstreamError(resp)
 		if s.shouldUseOpenAIProtocolFallback(c, account, openai_compat.ProtocolChatCompletions, resp.StatusCode, respBody) {
-			return nil, &openAIProtocolUnsupportedError{Protocol: openai_compat.ProtocolChatCompletions, StatusCode: resp.StatusCode}
+			return nil, &openAIProtocolUnsupportedError{Protocol: openai_compat.ProtocolChatCompletions, StatusCode: resp.StatusCode, CapabilityEvidence: openAIEndpointNotFoundJSON(resp.StatusCode, respBody)}
 		}
 		if foErr := s.failoverOpenAIUpstreamHTTPError(ctx, c, account, resp, respBody, upstreamMsg, upstreamModel); foErr != nil {
 			return nil, foErr

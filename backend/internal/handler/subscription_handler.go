@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"time"
+
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -143,6 +145,7 @@ func (h *SubscriptionHandler) GetSummary(c *gin.Context) {
 
 	var totalUsed float64
 	items := make([]SubscriptionSummaryItem, 0, len(subscriptions))
+	now := time.Now()
 
 	for _, sub := range subscriptions {
 		item := SubscriptionSummaryItem{
@@ -153,7 +156,7 @@ func (h *SubscriptionHandler) GetSummary(c *gin.Context) {
 			DailyUsedUSD:    sub.DailyUsageUSD,
 			WeeklyUsedUSD:   sub.WeeklyUsageUSD,
 			MonthlyUsedUSD:  sub.MonthlyUsageUSD,
-			FiveHourUsedUSD: sub.FiveHourUsageUSD,
+			FiveHourUsedUSD: sub.EffectiveFiveHourUsageAt(now),
 		}
 
 		// Add group info if preloaded

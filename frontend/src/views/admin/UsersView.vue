@@ -419,6 +419,11 @@
                 :platform="sub.group?.platform"
                 :subscription-type="sub.group?.subscription_type"
                 :rate-multiplier="sub.group?.rate_multiplier"
+                :peak-rate-enabled="sub.group?.peak_rate_enabled"
+                :peak-start="sub.group?.peak_start"
+                :peak-end="sub.group?.peak_end"
+                :peak-rate-multiplier="sub.group?.peak_rate_multiplier"
+                :peak-rate-windows="sub.group?.peak_rate_windows"
                 :days-remaining="sub.expires_at ? getDaysRemaining(sub.expires_at) : null"
                 :title="sub.expires_at ? formatDateTime(sub.expires_at) : ''"
               />

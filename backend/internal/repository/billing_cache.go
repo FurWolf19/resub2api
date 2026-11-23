@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"math/rand/v2"
 	"strconv"
 	"strings"
@@ -111,6 +112,14 @@ var (
 			else
 				redis.call('HINCRBYFLOAT', KEYS[1], 'five_hour_usage', cost)
 			end
+		elseif cost < 0 then
+			-- 负额是退款/冲正：只回退当前窗口用量并夹到 0，不开启或推进 5h 窗口。
+			local usage = tonumber(redis.call('HGET', KEYS[1], 'five_hour_usage') or 0) or 0
+			usage = usage + cost
+			if usage < 0 then
+				usage = 0
+			end
+			redis.call('HSET', KEYS[1], 'five_hour_usage', tostring(usage))
 		end
 		redis.call('EXPIRE', KEYS[1], ARGV[2])
 		return 1
@@ -243,9 +252,13 @@ func (c *billingCache) parseSubscriptionCache(data map[string]string) (*service.
 	}
 
 	// 旧版本缓存没有 quota_multiplier 字段：迁移前订阅按 1.0 处理。
+	// 解析失败或非有限值也回退到 1.0，绝不能把非法值当成 0（否则所有限额变 0）。
+	// 合法的 "0" 必须保持 0，因为 0 是有效倍率。
 	result.QuotaMultiplier = 1.0
 	if multiplierStr, ok := data[subFieldQuotaMultiplier]; ok && multiplierStr != "" {
-		result.QuotaMultiplier, _ = strconv.ParseFloat(multiplierStr, 64)
+		if multiplier, err := strconv.ParseFloat(multiplierStr, 64); err == nil && !math.IsNaN(multiplier) && !math.IsInf(multiplier, 0) {
+			result.QuotaMultiplier = multiplier
+		}
 	}
 
 	if versionStr, ok := data[subFieldVersion]; ok {

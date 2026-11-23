@@ -155,3 +155,62 @@ func TestSchedulerMetadataAccountDropsInvalidUpstreamBillingProbe(t *testing.T) 
 		require.NotContains(t, metadata.Extra, service.UpstreamBillingProbeExtraKey)
 	}
 }
+
+func TestSchedulerMetadataAccountKeepsMultiWindowUpstreamBillingProbe(t *testing.T) {
+	windows := []any{
+		map[string]any{"start": "09:00", "end": "12:00", "multiplier": 2.0},
+		map[string]any{"start": "20:00", "end": "22:00", "multiplier": 3.0, "days": []any{1, 2, 3, 4, 5}},
+	}
+	probe := map[string]any{
+		"status": "ok",
+		"data": map[string]any{
+			"billing_scope":            "token",
+			"resolved_rate_multiplier": 0.03,
+			"peak_rate_enabled":        true,
+			// 旧字段只同步了首窗口；实际计费必须依赖完整数组。
+			"peak_start":           "09:00",
+			"peak_end":             "12:00",
+			"peak_rate_multiplier": 2.0,
+			"peak_rate_windows":    windows,
+			"timezone":             "Asia/Shanghai",
+		},
+	}
+
+	metadata := buildSchedulerMetadataAccount(service.Account{
+		ID:    43,
+		Extra: map[string]any{service.UpstreamBillingProbeExtraKey: probe},
+	})
+
+	filtered, ok := metadata.Extra[service.UpstreamBillingProbeExtraKey].(map[string]any)
+	require.True(t, ok)
+	filteredData, ok := filtered["data"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, windows, filteredData["peak_rate_windows"], "第 2+ 个高峰窗口必须保留在调度快照里")
+}
+
+func TestSchedulerMetadataAccountKeepsOpenAIProtocolAndCompactCapabilities(t *testing.T) {
+	protocolCaps := map[string]any{
+		"responses":        map[string]any{"supported": false, "probed_at": "2026-07-13T10:00:00Z"},
+		"chat_completions": map[string]any{"supported": true, "probed_at": "2026-07-13T10:00:00Z"},
+	}
+	metadata := buildSchedulerMetadataAccount(service.Account{
+		ID:       44,
+		Platform: service.PlatformOpenAI,
+		Type:     service.AccountTypeAPIKey,
+		Extra: map[string]any{
+			"openai_protocol_capabilities": protocolCaps,
+			"openai_compact_supported":     false,
+			"openai_compact_mode":          "force_off",
+			"openai_responses_mode":        "force_chat_completions",
+			"openai_responses_supported":   false,
+			"unused_large_field":           "drop-me",
+		},
+	})
+
+	require.Equal(t, protocolCaps, metadata.Extra["openai_protocol_capabilities"])
+	require.Equal(t, false, metadata.Extra["openai_compact_supported"])
+	require.Equal(t, "force_off", metadata.Extra["openai_compact_mode"])
+	require.Equal(t, "force_chat_completions", metadata.Extra["openai_responses_mode"])
+	require.Equal(t, false, metadata.Extra["openai_responses_supported"])
+	require.Nil(t, metadata.Extra["unused_large_field"])
+}

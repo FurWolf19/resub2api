@@ -163,20 +163,21 @@ func BuildUpstreamBillingRateSnapshotItems(accounts []Account) []UpstreamBilling
 }
 
 type upstreamBillingProbeResponse struct {
-	Object                  string   `json:"object"`
-	SchemaVersion           int      `json:"schema_version"`
-	BillingScope            string   `json:"billing_scope"`
-	GroupRateMultiplier     *float64 `json:"group_rate_multiplier"`
-	UserRateMultiplier      *float64 `json:"user_rate_multiplier"`
-	ResolvedRateMultiplier  *float64 `json:"resolved_rate_multiplier"`
-	PeakRateEnabled         *bool    `json:"peak_rate_enabled"`
-	PeakStart               *string  `json:"peak_start"`
-	PeakEnd                 *string  `json:"peak_end"`
-	PeakRateMultiplier      *float64 `json:"peak_rate_multiplier"`
-	AppliedPeakMultiplier   *float64 `json:"applied_peak_multiplier"`
-	EffectiveRateMultiplier *float64 `json:"effective_rate_multiplier"`
-	Timezone                *string  `json:"timezone"`
-	ObservedAt              string   `json:"observed_at"`
+	Object                  string           `json:"object"`
+	SchemaVersion           int              `json:"schema_version"`
+	BillingScope            string           `json:"billing_scope"`
+	GroupRateMultiplier     *float64         `json:"group_rate_multiplier"`
+	UserRateMultiplier      *float64         `json:"user_rate_multiplier"`
+	ResolvedRateMultiplier  *float64         `json:"resolved_rate_multiplier"`
+	PeakRateEnabled         *bool            `json:"peak_rate_enabled"`
+	PeakStart               *string          `json:"peak_start"`
+	PeakEnd                 *string          `json:"peak_end"`
+	PeakRateMultiplier      *float64         `json:"peak_rate_multiplier"`
+	PeakRateWindows         []PeakRateWindow `json:"peak_rate_windows"`
+	AppliedPeakMultiplier   *float64         `json:"applied_peak_multiplier"`
+	EffectiveRateMultiplier *float64         `json:"effective_rate_multiplier"`
+	Timezone                *string          `json:"timezone"`
+	ObservedAt              string           `json:"observed_at"`
 }
 
 // GetUpstreamBillingProbeSettings returns defaults when the setting is absent.
@@ -951,17 +952,34 @@ func parseUpstreamBillingProbeResponse(body []byte) (map[string]any, error) {
 		data["user_rate_multiplier"] = *response.UserRateMultiplier
 	}
 	if *response.PeakRateEnabled {
-		if response.PeakStart == nil || response.PeakEnd == nil || response.Timezone == nil ||
-			response.PeakRateMultiplier == nil || response.AppliedPeakMultiplier == nil ||
-			*response.PeakStart == "" || *response.PeakEnd == "" || *response.Timezone == "" ||
-			*response.PeakRateMultiplier < 0 || *response.AppliedPeakMultiplier < 0 ||
-			math.IsNaN(*response.PeakRateMultiplier) || math.IsInf(*response.PeakRateMultiplier, 0) ||
+		if response.Timezone == nil || *response.Timezone == "" ||
+			response.AppliedPeakMultiplier == nil ||
+			*response.AppliedPeakMultiplier < 0 ||
 			math.IsNaN(*response.AppliedPeakMultiplier) || math.IsInf(*response.AppliedPeakMultiplier, 0) {
 			return nil, fmt.Errorf("incomplete peak billing response")
 		}
-		data["peak_start"] = *response.PeakStart
-		data["peak_end"] = *response.PeakEnd
-		data["peak_rate_multiplier"] = *response.PeakRateMultiplier
+		if len(response.PeakRateWindows) > 0 {
+			if !validUpstreamBillingPeakWindows(response.PeakRateWindows) {
+				return nil, fmt.Errorf("invalid peak billing response")
+			}
+			data["peak_rate_windows"] = response.PeakRateWindows
+		} else if response.PeakStart == nil || response.PeakEnd == nil ||
+			response.PeakRateMultiplier == nil ||
+			*response.PeakStart == "" || *response.PeakEnd == "" ||
+			*response.PeakRateMultiplier < 0 ||
+			math.IsNaN(*response.PeakRateMultiplier) || math.IsInf(*response.PeakRateMultiplier, 0) {
+			return nil, fmt.Errorf("incomplete peak billing response")
+		}
+		// 保留旧字段以便旧版调度/展示代码兼容；有 windows 时计算以数组为准。
+		if response.PeakStart != nil {
+			data["peak_start"] = *response.PeakStart
+		}
+		if response.PeakEnd != nil {
+			data["peak_end"] = *response.PeakEnd
+		}
+		if response.PeakRateMultiplier != nil {
+			data["peak_rate_multiplier"] = *response.PeakRateMultiplier
+		}
 		data["applied_peak_multiplier"] = *response.AppliedPeakMultiplier
 		data["timezone"] = *response.Timezone
 	}
@@ -1041,18 +1059,49 @@ func upstreamBillingPeakMultiplierAt(data map[string]any, now time.Time) (float6
 		return 1, true
 	}
 
-	start, startOK := data["peak_start"].(string)
-	end, endOK := data["peak_end"].(string)
 	timezoneName, timezoneOK := data["timezone"].(string)
-	peakMultiplier, multiplierOK := resolveAccountExtraNumber(data, "peak_rate_multiplier")
-	startMinute, validStart := parseMinutes(start)
-	endMinute, validEnd := parseMinutes(end)
-	if !startOK || !endOK || !timezoneOK || !multiplierOK || !validStart || !validEnd ||
-		startMinute >= endMinute || peakMultiplier < 0 || math.IsNaN(peakMultiplier) || math.IsInf(peakMultiplier, 0) {
+	if !timezoneOK || timezoneName == "" {
 		return 0, false
 	}
 	location, err := time.LoadLocation(timezoneName)
 	if err != nil {
+		return 0, false
+	}
+
+	// 新响应携带完整窗口数组，命中第 2+ 个窗口时也必须按数组计算，
+	// 不能沿用旧的首窗口字段重算，否则会误报 applied peak 不一致。
+	if windows, present, valid := upstreamBillingPeakWindowsFromData(data); present {
+		if !valid || !validUpstreamBillingPeakWindows(windows) {
+			return 0, false
+		}
+		if len(windows) > 0 {
+			local := now.In(location)
+			minute := local.Hour()*60 + local.Minute()
+			weekday := int(local.Weekday())
+			for _, w := range windows {
+				if !peakRateWindowDayMatches(w.Days, weekday) {
+					continue
+				}
+				startMinute, validStart := parseMinutes(strings.TrimSpace(w.Start))
+				endMinute, validEnd := parseMinutes(strings.TrimSpace(w.End))
+				if !validStart || !validEnd || startMinute >= endMinute {
+					return 0, false
+				}
+				if minute >= startMinute && minute < endMinute {
+					return w.Multiplier, true
+				}
+			}
+			return 1, true
+		}
+	}
+
+	start, startOK := data["peak_start"].(string)
+	end, endOK := data["peak_end"].(string)
+	peakMultiplier, multiplierOK := resolveAccountExtraNumber(data, "peak_rate_multiplier")
+	startMinute, validStart := parseMinutes(start)
+	endMinute, validEnd := parseMinutes(end)
+	if !startOK || !endOK || !multiplierOK || !validStart || !validEnd ||
+		startMinute >= endMinute || peakMultiplier < 0 || math.IsNaN(peakMultiplier) || math.IsInf(peakMultiplier, 0) {
 		return 0, false
 	}
 
@@ -1062,6 +1111,109 @@ func upstreamBillingPeakMultiplierAt(data map[string]any, now time.Time) (float6
 		return peakMultiplier, true
 	}
 	return 1, true
+}
+
+// upstreamBillingPeakWindowsFromData 读取响应/快照中的多窗口数组。
+// present 表示字段存在（即使为空数组）；valid 表示数据类型能解析为窗口列表。
+func upstreamBillingPeakWindowsFromData(data map[string]any) (windows []PeakRateWindow, present bool, valid bool) {
+	raw, exists := data["peak_rate_windows"]
+	if !exists || raw == nil {
+		return nil, false, true
+	}
+	switch value := raw.(type) {
+	case []PeakRateWindow:
+		return value, true, true
+	case []map[string]any:
+		out := make([]PeakRateWindow, 0, len(value))
+		for _, item := range value {
+			window, ok := upstreamBillingPeakWindowFromMap(item)
+			if !ok {
+				return nil, true, false
+			}
+			out = append(out, window)
+		}
+		return out, true, true
+	case []any:
+		out := make([]PeakRateWindow, 0, len(value))
+		for _, item := range value {
+			switch typed := item.(type) {
+			case map[string]any:
+				window, ok := upstreamBillingPeakWindowFromMap(typed)
+				if !ok {
+					return nil, true, false
+				}
+				out = append(out, window)
+			case PeakRateWindow:
+				out = append(out, typed)
+			default:
+				return nil, true, false
+			}
+		}
+		return out, true, true
+	default:
+		return nil, true, false
+	}
+}
+
+func upstreamBillingPeakWindowFromMap(raw map[string]any) (PeakRateWindow, bool) {
+	window := PeakRateWindow{}
+	start, okStart := raw["start"].(string)
+	end, okEnd := raw["end"].(string)
+	if !okStart || !okEnd {
+		return window, false
+	}
+	window.Start, window.End = start, end
+	switch multiplier := raw["multiplier"].(type) {
+	case float64:
+		window.Multiplier = multiplier
+	case float32:
+		window.Multiplier = float64(multiplier)
+	case int:
+		window.Multiplier = float64(multiplier)
+	case int64:
+		window.Multiplier = float64(multiplier)
+	case json.Number:
+		value, err := multiplier.Float64()
+		if err != nil {
+			return window, false
+		}
+		window.Multiplier = value
+	default:
+		return window, false
+	}
+	switch days := raw["days"].(type) {
+	case nil:
+	case []int:
+		window.Days = append([]int(nil), days...)
+	case []any:
+		for _, day := range days {
+			value, ok := day.(float64)
+			if !ok || value != math.Trunc(value) {
+				return window, false
+			}
+			window.Days = append(window.Days, int(value))
+		}
+	default:
+		return window, false
+	}
+	return window, true
+}
+
+func validUpstreamBillingPeakWindows(windows []PeakRateWindow) bool {
+	for _, w := range windows {
+		start, okStart := parseMinutes(strings.TrimSpace(w.Start))
+		end, okEnd := parseMinutes(strings.TrimSpace(w.End))
+		if !okStart || !okEnd || start >= end ||
+			w.Multiplier < 0 || math.IsNaN(w.Multiplier) || math.IsInf(w.Multiplier, 0) {
+			return false
+		}
+		for _, day := range w.Days {
+			if day < 0 || day > 6 {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func equalBillingMultiplier(left, right float64) bool {

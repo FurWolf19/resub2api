@@ -107,6 +107,7 @@ func TestValidatePeakRateConfig(t *testing.T) {
 	}{
 		{"disabled passes through", "subscription", false, "", "", 0, false},
 		{"subscription enabled valid", "subscription", true, "14:00", "18:00", 3.0, false},
+		{"legacy single digit hour still allowed", "subscription", true, "9:00", "18:00", 3.0, false},
 		{"standard enabled rejected", "standard", true, "14:00", "18:00", 3.0, true},
 		{"empty type treated as standard", "", true, "14:00", "18:00", 3.0, true},
 		{"standard disabled passes", "standard", false, "", "", 0, false},

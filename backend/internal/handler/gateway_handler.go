@@ -1839,7 +1839,7 @@ func (h *GatewayHandler) usageUnrestricted(c *gin.Context, ctx context.Context, 
 				"daily_usage_usd":        subscription.DailyUsageUSD,
 				"weekly_usage_usd":       subscription.WeeklyUsageUSD,
 				"monthly_usage_usd":      subscription.MonthlyUsageUSD,
-				"five_hour_usage_usd":    subscription.FiveHourUsageUSD,
+				"five_hour_usage_usd":    subscription.EffectiveFiveHourUsageAt(time.Now()),
 				"daily_limit_usd":        effectiveSubscriptionLimit(apiKey.Group.DailyLimitUSD, subscription),
 				"weekly_limit_usd":       effectiveSubscriptionLimit(apiKey.Group.WeeklyLimitUSD, subscription),
 				"monthly_limit_usd":      effectiveSubscriptionLimit(apiKey.Group.MonthlyLimitUSD, subscription),
@@ -1927,7 +1927,7 @@ func (h *GatewayHandler) calculateSubscriptionRemaining(group *service.Group, su
 
 	// 检查 5h 限额
 	if group.HasFiveHourLimit() {
-		remaining := sub.EffectiveLimit(group.FiveHourLimitUSD) - sub.FiveHourUsageUSD
+		remaining := sub.EffectiveLimit(group.FiveHourLimitUSD) - sub.EffectiveFiveHourUsageAt(time.Now())
 		if remaining <= 0 {
 			return 0
 		}
@@ -2573,6 +2573,15 @@ func billingErrorDetails(err error) (status int, code, message string, retryAfte
 		// 错误码用 rate_limit_exceeded 与 OpenAI 兼容客户端一致；细分类型由 ErrCode + window_resets_at metadata 区分。
 		msg := pkgerrors.Message(err)
 		return http.StatusTooManyRequests, "rate_limit_exceeded", msg, extractQuotaResetSeconds(err)
+	}
+	// 订阅日/周/月/5h 额度超限同样返回 429，避免 L1 缓存陈旧或预扣拒绝时
+	// 落到默认 403 让客户端误判为权限错误。Retry-After 使用统一退避值。
+	if errors.Is(err, service.ErrFiveHourLimitExceeded) ||
+		errors.Is(err, service.ErrDailyLimitExceeded) ||
+		errors.Is(err, service.ErrWeeklyLimitExceeded) ||
+		errors.Is(err, service.ErrMonthlyLimitExceeded) {
+		msg := pkgerrors.Message(err)
+		return http.StatusTooManyRequests, "USAGE_LIMIT_EXCEEDED", msg, extractQuotaResetSeconds(err)
 	}
 	msg := pkgerrors.Message(err)
 	if msg == "" {

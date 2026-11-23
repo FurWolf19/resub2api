@@ -109,13 +109,15 @@
             />
             <span>{{ t('admin.groups.peakRate.advanced') }}</span>
             <span class="truncate font-normal text-gray-400 dark:text-dark-500">
-              {{ formatPeakRateDays(entry.days, t) }}
+              {{ formatPeakRateEntryDays(entry, t) }}
             </span>
           </button>
 
           <div
             class="overflow-hidden transition-all duration-200 ease-in-out"
-            :class="entry.advancedOpen ? 'mt-3 max-h-80 opacity-100' : 'max-h-0 opacity-0'"
+            :class="entry.advancedOpen ? 'mt-3 max-h-80 opacity-100 visible' : 'max-h-0 opacity-0 invisible'"
+            :inert="!entry.advancedOpen"
+            :aria-hidden="!entry.advancedOpen"
           >
             <div class="rounded-lg border border-gray-200 bg-gray-50/80 p-3 dark:border-dark-700 dark:bg-dark-900/40">
               <div class="text-xs font-medium text-gray-600 dark:text-dark-300">
@@ -183,6 +185,7 @@ import { formatPeakRateDays } from '@/utils/peak-rate'
 import {
   createPeakRateWindowFormEntry,
   defaultCustomDays,
+  formatPeakRateEntryDays,
   type PeakRateDaysMode,
   type PeakRateWindowFormEntry,
 } from './peakRateForm'

@@ -3928,6 +3928,31 @@
                                 option as unknown as DefaultSubscriptionGroupOption
                               ).rate
                             "
+                            :peak-rate-enabled="
+                              (
+                                option as unknown as DefaultSubscriptionGroupOption
+                              ).peakRateEnabled
+                            "
+                            :peak-start="
+                              (
+                                option as unknown as DefaultSubscriptionGroupOption
+                              ).peakStart
+                            "
+                            :peak-end="
+                              (
+                                option as unknown as DefaultSubscriptionGroupOption
+                              ).peakEnd
+                            "
+                            :peak-rate-multiplier="
+                              (
+                                option as unknown as DefaultSubscriptionGroupOption
+                              ).peakRateMultiplier
+                            "
+                            :peak-rate-windows="
+                              (
+                                option as unknown as DefaultSubscriptionGroupOption
+                              ).peakRateWindows
+                            "
                           />
                           <span v-else class="text-gray-400">
                             {{ t("admin.settings.defaults.subscriptionGroup") }}
@@ -3954,6 +3979,31 @@
                               (
                                 option as unknown as DefaultSubscriptionGroupOption
                               ).rate
+                            "
+                            :peak-rate-enabled="
+                              (
+                                option as unknown as DefaultSubscriptionGroupOption
+                              ).peakRateEnabled
+                            "
+                            :peak-start="
+                              (
+                                option as unknown as DefaultSubscriptionGroupOption
+                              ).peakStart
+                            "
+                            :peak-end="
+                              (
+                                option as unknown as DefaultSubscriptionGroupOption
+                              ).peakEnd
+                            "
+                            :peak-rate-multiplier="
+                              (
+                                option as unknown as DefaultSubscriptionGroupOption
+                              ).peakRateMultiplier
+                            "
+                            :peak-rate-windows="
+                              (
+                                option as unknown as DefaultSubscriptionGroupOption
+                              ).peakRateWindows
                             "
                             :description="
                               (
@@ -4258,6 +4308,31 @@
                                     option as unknown as DefaultSubscriptionGroupOption
                                   ).rate
                                 "
+                                :peak-rate-enabled="
+                                  (
+                                    option as unknown as DefaultSubscriptionGroupOption
+                                  ).peakRateEnabled
+                                "
+                                :peak-start="
+                                  (
+                                    option as unknown as DefaultSubscriptionGroupOption
+                                  ).peakStart
+                                "
+                                :peak-end="
+                                  (
+                                    option as unknown as DefaultSubscriptionGroupOption
+                                  ).peakEnd
+                                "
+                                :peak-rate-multiplier="
+                                  (
+                                    option as unknown as DefaultSubscriptionGroupOption
+                                  ).peakRateMultiplier
+                                "
+                                :peak-rate-windows="
+                                  (
+                                    option as unknown as DefaultSubscriptionGroupOption
+                                  ).peakRateWindows
+                                "
                               />
                               <span v-else class="text-gray-400">
                                 {{
@@ -4286,6 +4361,31 @@
                                   (
                                     option as unknown as DefaultSubscriptionGroupOption
                                   ).rate
+                                "
+                                :peak-rate-enabled="
+                                  (
+                                    option as unknown as DefaultSubscriptionGroupOption
+                                  ).peakRateEnabled
+                                "
+                                :peak-start="
+                                  (
+                                    option as unknown as DefaultSubscriptionGroupOption
+                                  ).peakStart
+                                "
+                                :peak-end="
+                                  (
+                                    option as unknown as DefaultSubscriptionGroupOption
+                                  ).peakEnd
+                                "
+                                :peak-rate-multiplier="
+                                  (
+                                    option as unknown as DefaultSubscriptionGroupOption
+                                  ).peakRateMultiplier
+                                "
+                                :peak-rate-windows="
+                                  (
+                                    option as unknown as DefaultSubscriptionGroupOption
+                                  ).peakRateWindows
                                 "
                                 :description="
                                   (
@@ -9674,6 +9774,11 @@ interface DefaultSubscriptionGroupOption {
   platform: AdminGroup["platform"];
   subscriptionType: AdminGroup["subscription_type"];
   rate: number;
+  peakRateEnabled?: boolean;
+  peakStart?: string;
+  peakEnd?: string;
+  peakRateMultiplier?: number;
+  peakRateWindows?: AdminGroup["peak_rate_windows"];
   [key: string]: unknown;
 }
 
@@ -10445,6 +10550,11 @@ const defaultSubscriptionGroupOptions = computed<
     platform: group.platform,
     subscriptionType: group.subscription_type,
     rate: group.rate_multiplier,
+    peakRateEnabled: group.peak_rate_enabled,
+    peakStart: group.peak_start,
+    peakEnd: group.peak_end,
+    peakRateMultiplier: group.peak_rate_multiplier,
+    peakRateWindows: group.peak_rate_windows,
   })),
 );
 

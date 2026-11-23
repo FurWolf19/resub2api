@@ -13,6 +13,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/usersubscription"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/lib/pq"
 )
 
 type userSubscriptionRepository struct {
@@ -135,6 +136,8 @@ func (r *userSubscriptionRepository) GetActiveByUserIDAndGroupID(ctx context.Con
 	return userSubscriptionEntityToService(m), nil
 }
 
+// 已软删除的订阅不可更新：服务层必须先经 GetByID/GetByIDForUpdate 读取
+// （两者都过滤 deleted_at），读不到直接返回 ErrSubscriptionNotFound。
 func (r *userSubscriptionRepository) Update(ctx context.Context, sub *service.UserSubscription) error {
 	if sub == nil {
 		return service.ErrSubscriptionNilInput
@@ -150,7 +153,6 @@ func (r *userSubscriptionRepository) Update(ctx context.Context, sub *service.Us
 		SetNillableDailyWindowStart(sub.DailyWindowStart).
 		SetNillableWeeklyWindowStart(sub.WeeklyWindowStart).
 		SetNillableMonthlyWindowStart(sub.MonthlyWindowStart).
-		SetNillableFiveHourWindowStart(sub.FiveHourWindowStart).
 		SetDailyUsageUsd(sub.DailyUsageUSD).
 		SetWeeklyUsageUsd(sub.WeeklyUsageUSD).
 		SetMonthlyUsageUsd(sub.MonthlyUsageUSD).
@@ -159,6 +161,13 @@ func (r *userSubscriptionRepository) Update(ctx context.Context, sub *service.Us
 		SetNillableAssignedBy(sub.AssignedBy).
 		SetAssignedAt(sub.AssignedAt).
 		SetNotes(sub.Notes)
+
+	// SetNillable 在 nil 时不会生成 SET 子句，无法把已有窗口清空；续费必须显式写 NULL。
+	if sub.FiveHourWindowStart != nil {
+		builder = builder.SetFiveHourWindowStart(*sub.FiveHourWindowStart)
+	} else {
+		builder = builder.ClearFiveHourWindowStart()
+	}
 
 	updated, err := builder.Save(ctx)
 	if err == nil {
@@ -359,6 +368,7 @@ func (r *userSubscriptionRepository) ExtendExpiry(ctx context.Context, subscript
 	return translatePersistenceError(err, service.ErrSubscriptionNotFound, nil)
 }
 
+// 已软删除的订阅不可更新：调用方须先经 GetByIDForUpdate 过滤 deleted_at。
 func (r *userSubscriptionRepository) UpdateStatus(ctx context.Context, subscriptionID int64, status string) error {
 	client := clientFromContext(ctx, r.client)
 	_, err := client.UserSubscription.UpdateOneID(subscriptionID).
@@ -367,6 +377,7 @@ func (r *userSubscriptionRepository) UpdateStatus(ctx context.Context, subscript
 	return translatePersistenceError(err, service.ErrSubscriptionNotFound, nil)
 }
 
+// 已软删除的订阅不可更新：调用方须先经 GetByIDForUpdate 过滤 deleted_at。
 func (r *userSubscriptionRepository) UpdateNotes(ctx context.Context, subscriptionID int64, notes string) error {
 	client := clientFromContext(ctx, r.client)
 	_, err := client.UserSubscription.UpdateOneID(subscriptionID).
@@ -507,7 +518,8 @@ func (r *userSubscriptionRepository) IncrementUsage(ctx context.Context, id int6
 				ELSE us.five_hour_window_start
 			END,
 			five_hour_usage_usd = CASE
-				WHEN $1 <= 0 THEN us.five_hour_usage_usd
+				WHEN $1 < 0 THEN GREATEST(us.five_hour_usage_usd + $1, 0)
+				WHEN $1 = 0 THEN us.five_hour_usage_usd
 				WHEN us.five_hour_window_start IS NULL
 					OR us.five_hour_window_start <= NOW() - INTERVAL '5 hours'
 				THEN $1
@@ -586,6 +598,8 @@ func (r *userSubscriptionRepository) ListGroupQuotaMultipliers(ctx context.Conte
 			SELECT user_id FROM active_subs
 			UNION
 			SELECT user_id FROM rate_users
+			UNION
+			SELECT user_id FROM defaults
 		)
 		SELECT
 			ids.user_id,
@@ -665,6 +679,115 @@ func (r *userSubscriptionRepository) SetSubscriptionQuotaMultiplier(ctx context.
 	return err
 }
 
+// BatchSetGroupQuotaMultipliers 在调用方事务内批量保存分组额度倍率。
+// entries 为空表示清空整个分组：有效订阅统一置 1.0，并删除全部默认值。
+// 清空写 1.0：quota_multiplier 是 NOT NULL DEFAULT 1.0，不存 NULL。
+// user_group_quota_defaults 只用于分配弹窗预填，不参与有效倍率。
+// 返回实际更新过订阅的用户 ID，供提交后批量失效缓存。
+func (r *userSubscriptionRepository) BatchSetGroupQuotaMultipliers(ctx context.Context, groupID int64, entries []service.GroupQuotaMultiplierInput) ([]int64, error) {
+	client := clientFromContext(ctx, r.client)
+
+	if len(entries) == 0 {
+		rows, err := client.QueryContext(ctx, `
+			UPDATE user_subscriptions
+			SET quota_multiplier = 1.0, updated_at = NOW()
+			WHERE group_id = $1
+				AND deleted_at IS NULL
+				AND status = 'active'
+				AND expires_at > NOW()
+			RETURNING user_id
+		`, groupID)
+		if err != nil {
+			return nil, err
+		}
+		userIDs, err := scanInt64Rows(rows)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := client.ExecContext(ctx, `
+			DELETE FROM user_group_quota_defaults WHERE group_id = $1
+		`, groupID); err != nil {
+			return nil, err
+		}
+		return userIDs, nil
+	}
+
+	userIDs := make([]int64, 0, len(entries))
+	multipliers := make([]*float64, 0, len(entries))
+	for i := range entries {
+		userIDs = append(userIDs, entries[i].UserID)
+		multipliers = append(multipliers, entries[i].QuotaMultiplier)
+	}
+
+	rows, err := client.QueryContext(ctx, `
+		UPDATE user_subscriptions us
+		SET quota_multiplier = COALESCE(i.multiplier, 1.0)::numeric(10,4),
+			updated_at = NOW()
+		FROM UNNEST($2::bigint[], $3::double precision[]) AS i(user_id, multiplier)
+		WHERE us.group_id = $1
+			AND us.user_id = i.user_id
+			AND us.deleted_at IS NULL
+			AND us.status = 'active'
+			AND us.expires_at > NOW()
+		RETURNING us.user_id
+	`, groupID, pq.Array(userIDs), pq.Array(multipliers))
+	if err != nil {
+		return nil, err
+	}
+	changedUserIDs, err := scanInt64Rows(rows)
+	if err != nil {
+		return nil, err
+	}
+
+	// 无有效订阅的用户写入“下次分配默认值”；有订阅的用户只更新订阅。
+	if _, err := client.ExecContext(ctx, `
+		INSERT INTO user_group_quota_defaults (user_id, group_id, quota_multiplier, created_at, updated_at)
+		SELECT i.user_id, $1, i.multiplier::numeric(10,4), NOW(), NOW()
+		FROM UNNEST($2::bigint[], $3::double precision[]) AS i(user_id, multiplier)
+		WHERE i.multiplier IS NOT NULL
+			AND NOT EXISTS (
+				SELECT 1
+				FROM user_subscriptions us
+				WHERE us.user_id = i.user_id
+					AND us.group_id = $1
+					AND us.deleted_at IS NULL
+					AND us.status = 'active'
+					AND us.expires_at > NOW()
+			)
+		ON CONFLICT (user_id, group_id)
+		DO UPDATE SET quota_multiplier = EXCLUDED.quota_multiplier, updated_at = NOW()
+	`, groupID, pq.Array(userIDs), pq.Array(multipliers)); err != nil {
+		return nil, err
+	}
+
+	// 显式传入 null 表示清除该用户的默认值。
+	if _, err := client.ExecContext(ctx, `
+		DELETE FROM user_group_quota_defaults d
+		USING UNNEST($2::bigint[], $3::double precision[]) AS i(user_id, multiplier)
+		WHERE d.group_id = $1
+			AND d.user_id = i.user_id
+			AND i.multiplier IS NULL
+	`, groupID, pq.Array(userIDs), pq.Array(multipliers)); err != nil {
+		return nil, err
+	}
+
+	return changedUserIDs, nil
+}
+
+func scanInt64Rows(rows *sql.Rows) ([]int64, error) {
+	defer func() { _ = rows.Close() }()
+	result := make([]int64, 0)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		result = append(result, id)
+	}
+	return result, rows.Err()
+}
+
+// UpsertUserGroupQuotaDefault 仅用于分配弹窗预填，不得在分配/续费/支付路径读取。
 func (r *userSubscriptionRepository) UpsertUserGroupQuotaDefault(ctx context.Context, userID, groupID int64, multiplier float64) error {
 	client := clientFromContext(ctx, r.client)
 	_, err := client.ExecContext(ctx, `

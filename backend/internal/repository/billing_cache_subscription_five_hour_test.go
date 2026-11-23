@@ -76,3 +76,52 @@ func TestUpdateSubscriptionUsageFiveHourWindow(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1.0, data.QuotaMultiplier)
 }
+
+func TestUpdateSubscriptionUsageNegativeReversesWithoutOpeningFiveHourWindow(t *testing.T) {
+	cache := newBillingCacheForTest(t)
+	ctx := context.Background()
+
+	require.NoError(t, cache.SetSubscriptionCache(ctx, 1, 2, &service.SubscriptionCacheData{
+		Status:          service.SubscriptionStatusActive,
+		ExpiresAt:       time.Now().Add(time.Hour),
+		QuotaMultiplier: 1,
+	}))
+	require.NoError(t, cache.UpdateSubscriptionUsage(ctx, 1, 2, 5))
+	before, err := cache.GetSubscriptionCache(ctx, 1, 2)
+	require.NoError(t, err)
+	require.NotNil(t, before.FiveHourWindowStart)
+
+	// 负额只冲正日/周/月与当前 5h 用量，不开启/推进窗口。
+	require.NoError(t, cache.UpdateSubscriptionUsage(ctx, 1, 2, -10))
+	after, err := cache.GetSubscriptionCache(ctx, 1, 2)
+	require.NoError(t, err)
+	require.InDelta(t, -5, after.DailyUsage, 0.000001)
+	require.InDelta(t, -5, after.WeeklyUsage, 0.000001)
+	require.InDelta(t, -5, after.MonthlyUsage, 0.000001)
+	require.Zero(t, after.FiveHourUsage, "5h 冲正后不得为负")
+	require.Equal(t, before.FiveHourWindowStart.Unix(), after.FiveHourWindowStart.Unix(), "冲正不得改变窗口起点")
+}
+
+func TestParseSubscriptionCacheQuotaMultiplierFallback(t *testing.T) {
+	cache := newBillingCacheForTest(t)
+	ctx := context.Background()
+	key := billingSubKey(1, 2)
+
+	require.NoError(t, cache.SetSubscriptionCache(ctx, 1, 2, &service.SubscriptionCacheData{
+		Status:          service.SubscriptionStatusActive,
+		ExpiresAt:       time.Now().Add(time.Hour),
+		QuotaMultiplier: 1,
+	}))
+
+	// 非法字符串必须回退到 1.0，不能变成 0 导致全量拦截。
+	require.NoError(t, cache.rdb.HSet(ctx, key, "quota_multiplier", "not-a-number").Err())
+	data, err := cache.GetSubscriptionCache(ctx, 1, 2)
+	require.NoError(t, err)
+	require.Equal(t, 1.0, data.QuotaMultiplier)
+
+	// 合法的 0 必须保持 0。
+	require.NoError(t, cache.rdb.HSet(ctx, key, "quota_multiplier", "0").Err())
+	data, err = cache.GetSubscriptionCache(ctx, 1, 2)
+	require.NoError(t, err)
+	require.Zero(t, data.QuotaMultiplier)
+}

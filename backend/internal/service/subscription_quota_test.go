@@ -225,6 +225,93 @@ func TestAssignSubscriptionQuotaMultiplierRules(t *testing.T) {
 	})
 }
 
+func TestAssignOrExtendSubscriptionAppliesExplicitQuotaMultiplier(t *testing.T) {
+	half := 0.5
+
+	t.Run("expired renewal applies explicit multiplier", func(t *testing.T) {
+		repo := &quotaTestRepo{sub: &UserSubscription{
+			ID: 9, UserID: 1, GroupID: 7, Status: SubscriptionStatusExpired,
+			StartsAt: time.Now().Add(-48 * time.Hour), ExpiresAt: time.Now().Add(-24 * time.Hour),
+			QuotaMultiplier: 1,
+		}}
+		svc := newQuotaTestService(repo)
+		sub, reused, err := svc.AssignOrExtendSubscription(context.Background(), &AssignSubscriptionInput{
+			UserID: 1, GroupID: 7, QuotaMultiplier: &half,
+		})
+		require.NoError(t, err)
+		require.True(t, reused)
+		require.Equal(t, 0.5, sub.QuotaMultiplier)
+		require.Equal(t, 0.5, repo.quotaByID[9])
+	})
+
+	t.Run("active extension applies explicit multiplier", func(t *testing.T) {
+		repo := &quotaTestRepo{sub: &UserSubscription{
+			ID: 9, UserID: 1, GroupID: 7, Status: SubscriptionStatusActive,
+			StartsAt: time.Now().Add(-24 * time.Hour), ExpiresAt: time.Now().Add(24 * time.Hour),
+			QuotaMultiplier: 1,
+		}}
+		svc := newQuotaTestService(repo)
+		sub, reused, err := svc.AssignOrExtendSubscription(context.Background(), &AssignSubscriptionInput{
+			UserID: 1, GroupID: 7, QuotaMultiplier: &half,
+		})
+		require.NoError(t, err)
+		require.True(t, reused)
+		require.Equal(t, 0.5, sub.QuotaMultiplier)
+		require.Equal(t, 0.5, repo.quotaByID[9])
+	})
+
+	t.Run("nil multiplier preserves existing value", func(t *testing.T) {
+		repo := &quotaTestRepo{sub: &UserSubscription{
+			ID: 9, UserID: 1, GroupID: 7, Status: SubscriptionStatusActive,
+			StartsAt: time.Now().Add(-24 * time.Hour), ExpiresAt: time.Now().Add(24 * time.Hour),
+			QuotaMultiplier: 0.3,
+		}}
+		svc := newQuotaTestService(repo)
+		sub, _, err := svc.AssignOrExtendSubscription(context.Background(), &AssignSubscriptionInput{
+			UserID: 1, GroupID: 7,
+		})
+		require.NoError(t, err)
+		require.Equal(t, 0.3, sub.QuotaMultiplier)
+		require.Empty(t, repo.quotaByID)
+	})
+}
+
+func TestAssignSubscriptionExpiredRenewalAppliesExplicitQuotaMultiplier(t *testing.T) {
+	repo := &quotaTestRepo{sub: &UserSubscription{
+		ID: 9, UserID: 1, GroupID: 7, Status: SubscriptionStatusExpired,
+		StartsAt: time.Now().Add(-48 * time.Hour), ExpiresAt: time.Now().Add(-24 * time.Hour),
+		QuotaMultiplier: 1,
+	}}
+	svc := newQuotaTestService(repo)
+	half := 0.5
+
+	sub, err := svc.AssignSubscription(context.Background(), &AssignSubscriptionInput{
+		UserID: 1, GroupID: 7, QuotaMultiplier: &half,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 0.5, sub.QuotaMultiplier)
+	require.Equal(t, 0.5, repo.quotaByID[9])
+}
+
+func TestBulkAssignSubscriptionExpiredRenewalAppliesExplicitQuotaMultiplier(t *testing.T) {
+	repo := &quotaTestRepo{sub: &UserSubscription{
+		ID: 9, UserID: 1, GroupID: 7, Status: SubscriptionStatusExpired,
+		StartsAt: time.Now().Add(-48 * time.Hour), ExpiresAt: time.Now().Add(-24 * time.Hour),
+		QuotaMultiplier: 1,
+	}}
+	svc := newQuotaTestService(repo)
+	half := 0.5
+
+	result, err := svc.BulkAssignSubscription(context.Background(), &BulkAssignSubscriptionInput{
+		UserIDs: []int64{1}, GroupID: 7, QuotaMultiplier: &half,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, result.SuccessCount)
+	require.Len(t, result.Subscriptions, 1)
+	require.Equal(t, 0.5, result.Subscriptions[0].QuotaMultiplier)
+	require.Equal(t, 0.5, repo.quotaByID[9])
+}
+
 func TestAdminResetQuotaFiveHourClearsWindow(t *testing.T) {
 	start := time.Now().Add(-time.Hour)
 	repo := &quotaTestRepo{sub: &UserSubscription{
@@ -281,4 +368,68 @@ func TestBatchSetGroupQuotaMultiplierValidation(t *testing.T) {
 	bad := 1.01
 	err := svc.BatchSetGroupQuotaMultipliers(context.Background(), 7, []GroupQuotaMultiplierInput{{UserID: 1, QuotaMultiplier: &bad}})
 	require.ErrorIs(t, err, ErrInvalidQuotaMultiplier)
+}
+
+type quotaBatchTestRepo struct {
+	*quotaTestRepo
+	batchCalls   [][]GroupQuotaMultiplierInput
+	batchUserIDs []int64
+}
+
+func (r *quotaBatchTestRepo) BatchSetGroupQuotaMultipliers(_ context.Context, _ int64, entries []GroupQuotaMultiplierInput) ([]int64, error) {
+	cp := append([]GroupQuotaMultiplierInput(nil), entries...)
+	r.batchCalls = append(r.batchCalls, cp)
+	return r.batchUserIDs, nil
+}
+
+func newQuotaBatchTestService(repo *quotaBatchTestRepo) *SubscriptionService {
+	now := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
+	group := &Group{ID: 7, SubscriptionType: SubscriptionTypeSubscription, Name: "g"}
+	svc := NewSubscriptionService(&subscriptionGroupRepoStub{group: group}, repo, nil, nil, nil)
+	svc.now = func() time.Time { return now }
+	return svc
+}
+
+func TestBatchSetGroupQuotaMultipliersUsesBatchRepository(t *testing.T) {
+	repo := &quotaBatchTestRepo{quotaTestRepo: &quotaTestRepo{}, batchUserIDs: []int64{1, 2}}
+	svc := newQuotaBatchTestService(repo)
+
+	half := 0.5
+	err := svc.BatchSetGroupQuotaMultipliers(context.Background(), 7, []GroupQuotaMultiplierInput{
+		{UserID: 1, QuotaMultiplier: &half},
+		{UserID: 2, QuotaMultiplier: nil},
+		{UserID: 1, QuotaMultiplier: nil}, // 同一用户最后一条生效
+	})
+	require.NoError(t, err)
+	require.Len(t, repo.batchCalls, 1)
+	require.Len(t, repo.batchCalls[0], 2)
+	require.Equal(t, int64(1), repo.batchCalls[0][0].UserID)
+	require.Nil(t, repo.batchCalls[0][0].QuotaMultiplier)
+	require.Equal(t, int64(2), repo.batchCalls[0][1].UserID)
+	require.Nil(t, repo.batchCalls[0][1].QuotaMultiplier)
+}
+
+func TestBatchSetGroupQuotaMultipliersEmptyEntriesClearsGroup(t *testing.T) {
+	repo := &quotaBatchTestRepo{quotaTestRepo: &quotaTestRepo{}}
+	svc := newQuotaBatchTestService(repo)
+
+	err := svc.BatchSetGroupQuotaMultipliers(context.Background(), 7, nil)
+	require.NoError(t, err)
+	require.Len(t, repo.batchCalls, 1, "空数组必须传给仓储执行清空，而不是 no-op")
+	require.Empty(t, repo.batchCalls[0])
+}
+
+func TestBatchSetGroupQuotaMultipliersDeduplicatesLastValueWins(t *testing.T) {
+	repo := &quotaBatchTestRepo{quotaTestRepo: &quotaTestRepo{}}
+	svc := newQuotaBatchTestService(repo)
+
+	a := 0.2
+	b := 0.6
+	err := svc.BatchSetGroupQuotaMultipliers(context.Background(), 7, []GroupQuotaMultiplierInput{
+		{UserID: 1, QuotaMultiplier: &a},
+		{UserID: 1, QuotaMultiplier: &b},
+	})
+	require.NoError(t, err)
+	require.Len(t, repo.batchCalls[0], 1)
+	require.Equal(t, 0.6, *repo.batchCalls[0][0].QuotaMultiplier)
 }

@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -676,7 +677,14 @@ func TestForwardAsChatCompletions_KeepsOutboundAndObservedServiceTiersSeparate(t
 		Type:        AccountTypeAPIKey,
 		Concurrency: 1,
 		Credentials: map[string]any{"api_key": "sk-compatible"},
-		Extra:       map[string]any{"openai_responses_supported": true},
+		Extra: map[string]any{
+			"openai_responses_supported": true,
+			// Chat 入站显式认为不支持，保持本测试覆盖 Responses→Chat 转换链。
+			openai_compat.ExtraKeyProtocolCapabilities: map[string]any{
+				openai_compat.ProtocolResponses:       map[string]any{"supported": true},
+				openai_compat.ProtocolChatCompletions: map[string]any{"supported": false},
+			},
+		},
 		Status:      StatusActive,
 		Schedulable: true,
 	}
