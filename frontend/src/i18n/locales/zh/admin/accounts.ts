@@ -131,6 +131,9 @@ export default {
         chatCompletions: 'Chat Completions',
         responses: 'Responses',
         force: '强制',
+        forcedResponses: '强制 Responses',
+        forcedChat: '强制 Chat',
+        forcedOverrideHint: '强制模式覆盖协议探测结论，请求始终使用该徽标所示的协议。',
         status: {
           supported: '支持',
           unsupported: '不支持',

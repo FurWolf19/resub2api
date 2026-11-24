@@ -125,8 +125,7 @@ describe('OpenAIProtocolCapabilityCell', () => {
           openai_protocol_capabilities: {
             responses: { supported: true },
             chat_completions: { supported: false }
-          },
-          openai_responses_mode: 'force_responses'
+          }
         }
       })
     )
@@ -137,9 +136,7 @@ describe('OpenAIProtocolCapabilityCell', () => {
     expect(badge(wrapper, 'chat_completions').attributes('aria-label')).toBe(
       'admin.accounts.protocolCapabilities.chatCompletions · admin.accounts.protocolCapabilities.status.unsupported'
     )
-    expect(wrapper.get('[data-testid="protocol-badge-mode"]').attributes('aria-label')).toBe(
-      'admin.accounts.protocolCapabilities.force · admin.accounts.protocolCapabilities.modeForceResponses'
-    )
+    expect(wrapper.find('[data-testid="protocol-badge-mode"]').exists()).toBe(false)
   })
 
   it('shows both protocols as unknown without probe data', () => {
@@ -203,8 +200,24 @@ describe('OpenAIProtocolCapabilityCell', () => {
     )
   })
 
-  it('applies the mode override to responses and exposes a forced badge', () => {
-    const forcedResponses = mountCell(
+  it('shows exactly two status badges in auto mode', () => {
+    const wrapper = mountCell(
+      account({
+        extra: {
+          openai_protocol_capabilities: {
+            responses: { supported: true },
+            chat_completions: { supported: false }
+          }
+        }
+      })
+    )
+
+    expect(wrapper.findAll('[data-testid^="protocol-badge-"]')).toHaveLength(2)
+    expect(wrapper.find('[data-testid="protocol-badge-forced"]').exists()).toBe(false)
+  })
+
+  it('shows one purple forced Responses badge instead of status badges', () => {
+    const wrapper = mountCell(
       account({
         extra: {
           openai_responses_supported: false,
@@ -212,13 +225,26 @@ describe('OpenAIProtocolCapabilityCell', () => {
         }
       })
     )
-    expect(badge(forcedResponses, 'responses').attributes('data-status')).toBe('supported')
-    expect(forcedResponses.find('[data-testid="protocol-badge-mode"]').exists()).toBe(true)
-    expect(badge(forcedResponses, 'responses').attributes('title')).toContain(
-      'admin.accounts.protocolCapabilities.modeOverrideHint'
-    )
 
-    const forcedChat = mountCell(
+    const forced = wrapper.get('[data-testid="protocol-badge-forced"]')
+    expect(forced.attributes('data-protocol')).toBe('responses')
+    expect(forced.attributes('data-status')).toBe('forced')
+    expect(forced.text()).toBe('admin.accounts.protocolCapabilities.forcedResponses')
+    expect(forced.classes()).toContain('bg-purple-100')
+    expect(forced.classes()).toContain('text-purple-700')
+    expect(forced.classes()).toContain('dark:bg-purple-900/30')
+    expect(forced.classes()).toContain('dark:text-purple-400')
+    expect(wrapper.find('[data-testid="protocol-badge-responses"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="protocol-badge-chat_completions"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="protocol-badge-mode"]').exists()).toBe(false)
+    expect(wrapper.html()).not.toContain('bg-emerald-100')
+    expect(forced.attributes('title')).toContain(
+      'admin.accounts.protocolCapabilities.forcedOverrideHint'
+    )
+  })
+
+  it('shows one purple forced Chat badge instead of status badges', () => {
+    const wrapper = mountCell(
       account({
         extra: {
           openai_protocol_capabilities: { responses: { supported: true } },
@@ -226,14 +252,30 @@ describe('OpenAIProtocolCapabilityCell', () => {
         }
       })
     )
-    expect(badge(forcedChat, 'responses').attributes('data-status')).toBe('unsupported')
-    expect(forcedChat.find('[data-testid="protocol-badge-mode"]').exists()).toBe(true)
+
+    const forced = wrapper.get('[data-testid="protocol-badge-forced"]')
+    expect(forced.attributes('data-protocol')).toBe('chat_completions')
+    expect(forced.attributes('data-status')).toBe('forced')
+    expect(forced.text()).toBe('admin.accounts.protocolCapabilities.forcedChat')
+    expect(forced.classes()).toContain('bg-purple-100')
+    expect(forced.attributes('aria-label')).toBe(
+      'admin.accounts.protocolCapabilities.force · admin.accounts.protocolCapabilities.forcedChat'
+    )
+    expect(wrapper.find('[data-testid="protocol-badge-responses"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="protocol-badge-chat_completions"]').exists()).toBe(false)
+    expect(wrapper.html()).not.toContain('bg-emerald-100')
   })
 
-  it('renders a placeholder for non-OpenAI platforms', () => {
-    const wrapper = mountCell(account({ platform: 'anthropic', extra: { openai_responses_supported: true } }))
+  it('renders a placeholder for non-OpenAI platforms even with a forced mode', () => {
+    const wrapper = mountCell(
+      account({
+        platform: 'anthropic',
+        extra: { openai_responses_supported: true, openai_responses_mode: 'force_responses' }
+      })
+    )
 
     expect(wrapper.find('[data-testid="openai-protocol-capabilities"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="protocol-badge-forced"]').exists()).toBe(false)
     expect(wrapper.text()).toBe('-')
   })
 })

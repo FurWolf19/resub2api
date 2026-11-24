@@ -12,7 +12,7 @@
       :aria-label="badge.ariaLabel"
       :data-protocol="badge.protocol"
       :data-status="badge.status"
-      :data-testid="`protocol-badge-${badge.protocol}`"
+      :data-testid="badge.testId"
     >
       <svg
         class="h-2.5 w-2.5 flex-shrink-0"
@@ -35,6 +35,12 @@
           d="M6 18L18 6M6 6l12 12"
         />
         <path
+          v-else-if="badge.status === 'forced'"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          d="M13 2L4.5 13.5H11l-1 8.5L19.5 10H13V2z"
+        />
+        <path
           v-else
           stroke-linecap="round"
           stroke-linejoin="round"
@@ -42,15 +48,6 @@
         />
       </svg>
       <span>{{ badge.label }}</span>
-    </span>
-    <span
-      v-if="showModeOverride"
-      class="inline-flex items-center rounded-md bg-purple-100 px-1.5 py-px text-[10px] font-medium leading-tight text-purple-700 dark:bg-purple-900/30 dark:text-purple-400"
-      :title="modeTooltip"
-      :aria-label="modeAriaLabel"
-      data-testid="protocol-badge-mode"
-    >
-      {{ t('admin.accounts.protocolCapabilities.force') }}
     </span>
   </div>
 </template>
@@ -68,6 +65,7 @@ const props = defineProps<{
 const { t } = useI18n()
 
 type CapabilityStatus = 'supported' | 'unsupported' | 'unknown'
+type BadgeStatus = CapabilityStatus | 'forced'
 
 interface CapabilityView {
   status: CapabilityStatus
@@ -79,6 +77,9 @@ const STATUS_CLASS: Record<CapabilityStatus, string> = {
   unsupported: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
   unknown: 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'
 }
+
+const FORCED_CLASS =
+  'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400'
 
 const STATUS_LABEL_KEY: Record<CapabilityStatus, string> = {
   supported: 'admin.accounts.protocolCapabilities.status.supported',
@@ -142,17 +143,6 @@ const capabilities = computed(() => {
   return { responses, chatCompletions, mode }
 })
 
-const modeLabel = computed(() => {
-  const mode = capabilities.value.mode
-  if (mode === 'force_responses') {
-    return t('admin.accounts.protocolCapabilities.modeForceResponses')
-  }
-  if (mode === 'force_chat_completions') {
-    return t('admin.accounts.protocolCapabilities.modeForceChatCompletions')
-  }
-  return t('admin.accounts.protocolCapabilities.modeAuto')
-})
-
 const formatProbedAt = (value: string | number | null): string => {
   if (value === null) return ''
   if (typeof value === 'number') {
@@ -170,15 +160,11 @@ const formatProbedAt = (value: string | number | null): string => {
   return formatDateTime(text)
 }
 
-const buildTooltip = (label: string, capability: CapabilityView, includeMode: boolean): string => {
+const buildTooltip = (label: string, capability: CapabilityView): string => {
   const parts = [`${label} · ${t(STATUS_LABEL_KEY[capability.status])}`]
   const probedAt = formatProbedAt(capability.probedAt)
   if (probedAt) {
     parts.push(t('admin.accounts.protocolCapabilities.probedAt', { time: probedAt }))
-  }
-  if (includeMode && capabilities.value.mode !== 'auto') {
-    parts.push(t('admin.accounts.protocolCapabilities.mode', { mode: modeLabel.value }))
-    parts.push(t('admin.accounts.protocolCapabilities.modeOverrideHint'))
   }
   return parts.join('\n')
 }
@@ -186,8 +172,32 @@ const buildTooltip = (label: string, capability: CapabilityView, includeMode: bo
 const buildStatusLabel = (label: string, status: CapabilityStatus): string =>
   `${label} · ${t(STATUS_LABEL_KEY[status])}`
 
+// 强制模式下协议由账号配置直接决定，探测结论不参与路由，因此只展示一枚
+// 紫色强制徽标，不再展示 Chat/Responses 的绿/红/灰状态，避免误读。
 const badges = computed(() => {
-  const { responses, chatCompletions } = capabilities.value
+  const { responses, chatCompletions, mode } = capabilities.value
+  if (mode !== 'auto') {
+    const forcedResponses = mode === 'force_responses'
+    const label = forcedResponses
+      ? t('admin.accounts.protocolCapabilities.forcedResponses')
+      : t('admin.accounts.protocolCapabilities.forcedChat')
+    const forcedStatus: BadgeStatus = 'forced'
+    return [
+      {
+        protocol: forcedResponses ? ('responses' as const) : ('chat_completions' as const),
+        label,
+        status: forcedStatus,
+        colorClass: FORCED_CLASS,
+        ariaLabel: `${t('admin.accounts.protocolCapabilities.force')} · ${label}`,
+        tooltip: [
+          label,
+          t('admin.accounts.protocolCapabilities.forcedOverrideHint')
+        ].join('\n'),
+        testId: 'protocol-badge-forced'
+      }
+    ]
+  }
+
   const chatLabel = t('admin.accounts.protocolCapabilities.chatCompletions')
   const responsesLabel = t('admin.accounts.protocolCapabilities.responses')
   return [
@@ -197,7 +207,8 @@ const badges = computed(() => {
       status: chatCompletions.status,
       colorClass: STATUS_CLASS[chatCompletions.status],
       ariaLabel: buildStatusLabel(chatLabel, chatCompletions.status),
-      tooltip: buildTooltip(chatLabel, chatCompletions, false)
+      tooltip: buildTooltip(chatLabel, chatCompletions),
+      testId: 'protocol-badge-chat_completions'
     },
     {
       protocol: 'responses' as const,
@@ -205,21 +216,9 @@ const badges = computed(() => {
       status: responses.status,
       colorClass: STATUS_CLASS[responses.status],
       ariaLabel: buildStatusLabel(responsesLabel, responses.status),
-      tooltip: buildTooltip(responsesLabel, responses, true)
+      tooltip: buildTooltip(responsesLabel, responses),
+      testId: 'protocol-badge-responses'
     }
   ]
 })
-
-const showModeOverride = computed(() => capabilities.value.mode !== 'auto')
-
-const modeAriaLabel = computed(
-  () => `${t('admin.accounts.protocolCapabilities.force')} · ${modeLabel.value}`
-)
-
-const modeTooltip = computed(() =>
-  [
-    t('admin.accounts.protocolCapabilities.mode', { mode: modeLabel.value }),
-    t('admin.accounts.protocolCapabilities.modeOverrideHint')
-  ].join('\n')
-)
 </script>

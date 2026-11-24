@@ -285,6 +285,10 @@ export default {
         chatCompletions: 'Chat Completions',
         responses: 'Responses',
         force: 'Forced',
+        forcedResponses: 'Forced Responses',
+        forcedChat: 'Forced Chat',
+        forcedOverrideHint:
+          'Forced mode overrides the protocol probe result; requests always use the protocol shown on this badge.',
         status: {
           supported: 'Supported',
           unsupported: 'Unsupported',
