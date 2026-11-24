@@ -119,28 +119,27 @@ func TestChatCompletionsToResponses_MessageTypesWithReasoningAndTools(t *testing
 
 	var items []ResponsesInputItem
 	require.NoError(t, json.Unmarshal(resp.Input, &items))
-	require.Len(t, items, 7)
+	require.Len(t, items, 6)
 	for i, want := range []struct{ typ, role string }{
 		{"message", "system"},
 		{"message", "user"},
 		{"message", "assistant"},
 		{"function_call", ""},
 		{"function_call_output", ""},
-		{"message", "assistant"},
 		{"message", "user"},
 	} {
 		assert.Equal(t, want.typ, items[i].Type, "input item %d type", i)
 		assert.Equal(t, want.role, items[i].Role, "input item %d role", i)
 	}
-	var assistantContent, reasoningOnlyContent []ResponsesContentPart
+	var assistantContent []ResponsesContentPart
 	require.NoError(t, json.Unmarshal(items[2].Content, &assistantContent))
-	require.NoError(t, json.Unmarshal(items[5].Content, &reasoningOnlyContent))
 	require.Len(t, assistantContent, 1)
-	require.Len(t, reasoningOnlyContent, 1)
-	assert.Equal(t, "<thinking>Need to inspect the directory.</thinking>\nI will check.", assistantContent[0].Text)
-	assert.Equal(t, "<thinking>The tool returned /tmp.</thinking>", reasoningOnlyContent[0].Text)
+	assert.Equal(t, "I will check.", assistantContent[0].Text)
 	assert.Equal(t, "call_1", items[3].CallID)
 	assert.Equal(t, "call_1", items[4].CallID)
+	assert.NotContains(t, string(resp.Input), "<thinking>")
+	assert.NotContains(t, string(resp.Input), "Need to inspect the directory.")
+	assert.NotContains(t, string(resp.Input), "The tool returned /tmp.")
 }
 
 func TestChatCompletionsToResponses_ToolCalls(t *testing.T) {
@@ -653,7 +652,7 @@ func TestChatCompletionsToResponses_EmptyContentNeverNull(t *testing.T) {
 	}
 }
 
-func TestChatCompletionsResponseToResponses_DeepSeekReasoningOnlyFallsBackToMessageText(t *testing.T) {
+func TestChatCompletionsResponseToResponses_DeepSeekReasoningOnlyHasNoMessageText(t *testing.T) {
 	content := json.RawMessage(`""`)
 	resp := &ChatCompletionsResponse{
 		ID:     "chatcmpl_deepseek_reasoning_only",
@@ -672,11 +671,14 @@ func TestChatCompletionsResponseToResponses_DeepSeekReasoningOnlyFallsBackToMess
 
 	out := ChatCompletionsResponseToResponses(resp, "deepseek-reasoner", nil, nil, false, nil)
 
-	require.Len(t, out.Output, 2)
+	require.Len(t, out.Output, 1)
 	require.Equal(t, "reasoning", out.Output[0].Type)
-	require.Equal(t, "message", out.Output[1].Type)
-	require.Len(t, out.Output[1].Content, 1)
-	assert.Equal(t, "reasoning-only answer", out.Output[1].Content[0].Text)
+	require.Len(t, out.Output[0].Summary, 1)
+	assert.Equal(t, "reasoning-only answer", out.Output[0].Summary[0].Text)
+	assert.Equal(t, "completed", out.Status)
+	for _, item := range out.Output {
+		require.NotEqual(t, "message", item.Type)
+	}
 }
 
 func TestChatCompletionsResponseToResponses_DeepSeekReasoningToolCallDoesNotFallbackToMessageText(t *testing.T) {
@@ -903,7 +905,7 @@ func TestChatCompletionsToResponses_AssistantArrayContentPreserved(t *testing.T)
 	assert.Equal(t, "AB", parts[0].Text)
 }
 
-func TestChatCompletionsToResponses_AssistantThinkingTagPreserved(t *testing.T) {
+func TestChatCompletionsToResponses_AssistantThinkingPartDropped(t *testing.T) {
 	req := &ChatCompletionsRequest{
 		Model: "gpt-4o",
 		Messages: []ChatMessage{
@@ -923,11 +925,12 @@ func TestChatCompletionsToResponses_AssistantThinkingTagPreserved(t *testing.T) 
 	require.NoError(t, json.Unmarshal(items[1].Content, &parts))
 	require.Len(t, parts, 1)
 	assert.Equal(t, "output_text", parts[0].Type)
-	assert.Contains(t, parts[0].Text, "<thinking>internal plan</thinking>")
-	assert.Contains(t, parts[0].Text, "final answer")
+	assert.Equal(t, "final answer", parts[0].Text)
+	assert.NotContains(t, string(resp.Input), "<thinking>")
+	assert.NotContains(t, string(resp.Input), "internal plan")
 }
 
-func TestChatCompletionsToResponses_AssistantReasoningContentPreserved(t *testing.T) {
+func TestChatCompletionsToResponses_AssistantReasoningContentDropped(t *testing.T) {
 	req := &ChatCompletionsRequest{
 		Model: "gpt-4o",
 		Messages: []ChatMessage{
@@ -951,8 +954,9 @@ func TestChatCompletionsToResponses_AssistantReasoningContentPreserved(t *testin
 	require.NoError(t, json.Unmarshal(items[1].Content, &parts))
 	require.Len(t, parts, 1)
 	assert.Equal(t, "output_text", parts[0].Type)
-	assert.Contains(t, parts[0].Text, "<thinking>internal plan</thinking>")
-	assert.Contains(t, parts[0].Text, "final answer")
+	assert.Equal(t, "final answer", parts[0].Text)
+	assert.NotContains(t, string(resp.Input), "<thinking>")
+	assert.NotContains(t, string(resp.Input), "internal plan")
 }
 
 // ---------------------------------------------------------------------------

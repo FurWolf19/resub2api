@@ -257,7 +257,7 @@ func TestForwardResponses_ChatFallbackRejectsInvalidToolArgumentsAtOutputLimit(t
 	require.NotContains(t, rec.Body.String(), "data: [DONE]")
 }
 
-func TestForwardResponses_DeepSeekReasoningOnlyStreamProducesVisibleText(t *testing.T) {
+func TestForwardResponses_DeepSeekReasoningOnlyStreamProducesNoVisibleText(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	body := []byte(`{"model":"deepseek-reasoner","input":"hello","stream":true}`)
@@ -290,8 +290,11 @@ func TestForwardResponses_DeepSeekReasoningOnlyStreamProducesVisibleText(t *test
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.True(t, result.Stream)
-	require.Contains(t, rec.Body.String(), "event: response.output_text.delta")
+	require.Contains(t, rec.Body.String(), "event: response.reasoning_summary_text.delta")
 	require.Contains(t, rec.Body.String(), `"delta":"visible fallback"`)
+	require.NotContains(t, rec.Body.String(), "response.output_text.delta")
+	require.NotContains(t, rec.Body.String(), "response.output_text.done")
+	require.NotContains(t, rec.Body.String(), `"type":"message"`)
 	require.Contains(t, rec.Body.String(), `"status":"incomplete"`)
 	require.Contains(t, rec.Body.String(), "data: [DONE]")
 }

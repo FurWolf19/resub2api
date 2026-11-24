@@ -16,6 +16,18 @@ func chatCompletionsToResponses(cfg *config.Config, req *apicompat.ChatCompletio
 	return apicompat.ChatCompletionsToResponsesWithMinOutputTokens(req, configuredMinOutputTokens(cfg))
 }
 
+// chatCompletionsToResponsesForAccount converts a Chat Completions request for
+// the given account. DeepSeek's native Responses API takes historical reasoning
+// as reasoning_text; other upstreams cannot consume plaintext reasoning, so it
+// is dropped instead of leaking into visible content.
+func chatCompletionsToResponsesForAccount(cfg *config.Config, account *Account, req *apicompat.ChatCompletionsRequest) (*apicompat.ResponsesRequest, error) {
+	replay := apicompat.ChatCompletionsReasoningReplayDrop
+	if targetsDeepSeekAPIHost(account) {
+		replay = apicompat.ChatCompletionsReasoningReplayText
+	}
+	return apicompat.ChatCompletionsToResponsesWithReasoningReplay(req, configuredMinOutputTokens(cfg), replay)
+}
+
 func settingServiceConfig(settingService *SettingService) *config.Config {
 	if settingService == nil {
 		return nil

@@ -633,6 +633,10 @@ func buildChatMessagesFromItems(messages []ChatMessage, rawItems []json.RawMessa
 		if err != nil {
 			return nil, nil, err
 		}
+		var legacyReasoning string
+		if role == "assistant" {
+			chatContent, legacyReasoning = stripLeadingThinkingFromChatContent(chatContent)
+		}
 		msg := ChatMessage{Role: role, Content: chatContent}
 		// DeepSeek thinking mode requires the reasoning_content from a prior
 		// reasoning-only / plain-text assistant turn to be passed back on its
@@ -643,6 +647,9 @@ func buildChatMessagesFromItems(messages []ChatMessage, rawItems []json.RawMessa
 		// ReasoningContent when it is still empty.
 		if role == "assistant" {
 			msg.ReasoningContent = reasoningForAssistant()
+			if msg.ReasoningContent == "" {
+				msg.ReasoningContent = legacyReasoning
+			}
 			pendingReasoning = ""
 		} else {
 			pendingReasoning = ""
@@ -1410,10 +1417,7 @@ func chatMessageToResponsesOutput(message ChatMessage, customTools, functionTool
 	}
 
 	text := chatMessageContentText(message.Content)
-	if text == "" && strings.TrimSpace(reasoning) != "" && len(message.ToolCalls) == 0 {
-		text = reasoning
-	}
-	if text != "" || len(message.ToolCalls) == 0 {
+	if text != "" || (len(message.ToolCalls) == 0 && strings.TrimSpace(reasoning) == "") {
 		outputs = append(outputs, ResponsesOutput{
 			Type: "message",
 			ID:   generateItemID(),
@@ -1808,9 +1812,9 @@ func FinalizeChatCompletionsResponsesStream(state *ChatCompletionsToResponsesStr
 	events = append(events, ensureChatToResponsesCreated(state)...)
 
 	// Close a reasoning item that never transitioned to content (reasoning-only
-	// or empty completion).
+	// or empty completion). Reasoning-only responses keep no message item; the
+	// reasoning channel is the only output.
 	events = append(events, closeChatReasoningItem(state)...)
-	events = append(events, synthesizeChatReasoningFallbackMessage(state)...)
 
 	if state.MessageItemID != "" {
 		if state.TextPartOpen {
@@ -1943,33 +1947,6 @@ func closeChatReasoningItem(state *ChatCompletionsToResponsesStreamState) []Resp
 			},
 		}),
 	}
-}
-
-func synthesizeChatReasoningFallbackMessage(state *ChatCompletionsToResponsesStreamState) []ResponsesStreamEvent {
-	if state == nil ||
-		state.MessageItemID != "" ||
-		state.Text.Len() > 0 ||
-		state.Reasoning.Len() == 0 ||
-		len(state.ToolCalls) > 0 {
-		return nil
-	}
-
-	text := state.Reasoning.String()
-	if strings.TrimSpace(text) == "" {
-		return nil
-	}
-
-	var events []ResponsesStreamEvent
-	events = append(events, ensureChatToResponsesMessageItem(state)...)
-	events = append(events, ensureChatToResponsesTextPart(state)...)
-	_, _ = state.Text.WriteString(text)
-	events = append(events, chatToResponsesEvent(state, "response.output_text.delta", &ResponsesStreamEvent{
-		OutputIndex:  state.MessageIndex,
-		ContentIndex: 0,
-		Delta:        text,
-		ItemID:       state.MessageItemID,
-	}))
-	return events
 }
 
 func ensureChatToResponsesMessageItem(state *ChatCompletionsToResponsesStreamState) []ResponsesStreamEvent {
@@ -2179,7 +2156,7 @@ func (state *ChatCompletionsToResponsesStreamState) chatOutput() []ResponsesOutp
 			}},
 		})
 	}
-	if state.MessageItemID != "" || len(state.ToolCalls) == 0 {
+	if state.MessageItemID != "" || (len(state.ToolCalls) == 0 && strings.TrimSpace(state.Reasoning.String()) == "") {
 		outputs = append(outputs, ResponsesOutput{
 			Type: "message",
 			ID:   nonEmpty(state.MessageItemID, generateItemID()),

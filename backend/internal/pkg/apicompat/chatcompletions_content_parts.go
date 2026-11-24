@@ -1,0 +1,189 @@
+package apicompat
+
+import (
+	"bytes"
+	"encoding/json"
+	"strings"
+)
+
+// Some OpenAI-compatible upstreams return reasoning inline in the Chat
+// Completions content field, as a string or as an array of typed parts. The
+// array shape has no reasoning_content field; reasoning is carried by
+// {"type":"thinking","thinking":[{"type":"text","text":"..."}]} parts.
+//
+// Only the response path is normalized: ChatMessage is also used for client
+// requests, where user/system content arrays must keep their multimodal parts
+// (image_url, file) untouched. ChatChoice.UnmarshalJSON therefore normalizes
+// the assistant message after the whole response has been decoded.
+func (c *ChatChoice) UnmarshalJSON(data []byte) error {
+	type chatChoiceAlias ChatChoice
+	var alias chatChoiceAlias
+	if err := json.Unmarshal(data, &alias); err != nil {
+		return err
+	}
+	*c = ChatChoice(alias)
+	normalizeChatResponseMessageContent(&c.Message)
+	return nil
+}
+
+func normalizeChatResponseMessageContent(m *ChatMessage) {
+	if m == nil || m.Role != "assistant" {
+		return
+	}
+	raw := bytes.TrimSpace(m.Content)
+	if len(raw) == 0 || raw[0] != '[' {
+		return
+	}
+	visible, reasoning := chatContentArrayParts(raw)
+	if reasoning == "" {
+		return
+	}
+	m.Content = marshalChatContentString(visible)
+	m.ReasoningContent = joinChatReasoningText(m.reasoningText(), reasoning)
+}
+
+// UnmarshalJSON accepts delta.content as a string or an array of typed parts.
+// Reasoning parts are moved to reasoning_content and never become visible
+// content.
+func (d *ChatDelta) UnmarshalJSON(data []byte) error {
+	var wire struct {
+		Role             string          `json:"role,omitempty"`
+		Content          json.RawMessage `json:"content"`
+		Refusal          *string         `json:"refusal,omitempty"`
+		ReasoningContent *string         `json:"reasoning_content,omitempty"`
+		Reasoning        *string         `json:"reasoning,omitempty"`
+		ToolCalls        []ChatToolCall  `json:"tool_calls,omitempty"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	*d = ChatDelta{
+		Role:             wire.Role,
+		Refusal:          wire.Refusal,
+		ReasoningContent: wire.ReasoningContent,
+		Reasoning:        wire.Reasoning,
+		ToolCalls:        wire.ToolCalls,
+	}
+
+	raw := bytes.TrimSpace(wire.Content)
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var content string
+	if err := json.Unmarshal(raw, &content); err == nil {
+		d.Content = &content
+		return nil
+	}
+	if raw[0] != '[' {
+		return nil
+	}
+
+	visible, reasoning, hasVisible, hasReasoning := chatContentArrayPartsDetailed(raw)
+	if hasVisible {
+		d.Content = &visible
+	}
+	if hasReasoning && reasoning != "" {
+		existing := ""
+		if d.ReasoningContent != nil {
+			existing = *d.ReasoningContent
+		} else if d.Reasoning != nil {
+			existing = *d.Reasoning
+		}
+		combined := joinChatReasoningText(existing, reasoning)
+		d.ReasoningContent = &combined
+	}
+	return nil
+}
+
+func chatContentArrayParts(raw json.RawMessage) (visible, reasoning string) {
+	visible, reasoning, _, _ = chatContentArrayPartsDetailed(raw)
+	return visible, reasoning
+}
+
+// chatContentArrayPartsDetailed splits array content into visible text and
+// reasoning text. Unknown part types are ignored: they are neither promoted to
+// visible content nor turned into reasoning.
+func chatContentArrayPartsDetailed(raw json.RawMessage) (visible, reasoning string, hasVisible, hasReasoning bool) {
+	var parts []json.RawMessage
+	if err := json.Unmarshal(raw, &parts); err != nil {
+		return "", "", false, false
+	}
+	var visibleBuilder, reasoningBuilder strings.Builder
+	for _, partRaw := range parts {
+		var part map[string]json.RawMessage
+		if err := json.Unmarshal(partRaw, &part); err != nil {
+			continue
+		}
+		switch rawString(part["type"]) {
+		case "thinking", "reasoning":
+			text := chatContentPartReasoning(part)
+			if text == "" {
+				continue
+			}
+			hasReasoning = true
+			reasoningBuilder.WriteString(text)
+		case "text", "output_text", "input_text", "":
+			text := rawString(part["text"])
+			if text == "" {
+				continue
+			}
+			hasVisible = true
+			visibleBuilder.WriteString(text)
+		}
+	}
+	return visibleBuilder.String(), reasoningBuilder.String(), hasVisible, hasReasoning
+}
+
+// chatContentPartReasoning reads a reasoning part. The value may be a plain
+// string or an array of {"type":"text","text":"..."} entries (Mistral). The
+// "closed" flag is deliberately ignored.
+func chatContentPartReasoning(part map[string]json.RawMessage) string {
+	if raw, ok := part["thinking"]; ok {
+		if text := chatNestedText(raw); text != "" {
+			return text
+		}
+	}
+	return rawString(part["text"])
+}
+
+func chatNestedText(raw json.RawMessage) string {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		return text
+	}
+	var parts []json.RawMessage
+	if err := json.Unmarshal(raw, &parts); err != nil {
+		return ""
+	}
+	var b strings.Builder
+	for _, partRaw := range parts {
+		var part map[string]json.RawMessage
+		if err := json.Unmarshal(partRaw, &part); err != nil {
+			continue
+		}
+		b.WriteString(rawString(part["text"]))
+	}
+	return b.String()
+}
+
+func marshalChatContentString(text string) json.RawMessage {
+	raw, err := json.Marshal(text)
+	if err != nil {
+		return json.RawMessage(`""`)
+	}
+	return raw
+}
+
+func joinChatReasoningText(existing, extra string) string {
+	if extra == "" {
+		return existing
+	}
+	if existing == "" {
+		return extra
+	}
+	return existing + "\n" + extra
+}
