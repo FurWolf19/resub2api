@@ -4,11 +4,11 @@
 
 # ReSub2API
 
-[![Go](https://img.shields.io/badge/Go-1.27.0-00ADD8.svg)](https://golang.org/)
+[![Go](https://img.shields.io/badge/Go-1.27.4-00ADD8.svg)](https://golang.org/)
 [![Vue](https://img.shields.io/badge/Vue-3.4+-4FC08D.svg)](https://vuejs.org/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15+-336791.svg)](https://www.postgresql.org/)
 [![Redis](https://img.shields.io/badge/Redis-7+-DC382D.svg)](https://redis.io/)
-[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED.svg)](https://www.docker.com/)
+[![Docker](https://img.shields.io/badge/Docker-njmlp%2Fresub2api-2496ED.svg)](https://hub.docker.com/r/njmlp/resub2api)
 
 **AI API 网关平台 - 订阅配额分发管理**
 
@@ -29,28 +29,7 @@
 
 ## 项目概述
 
-ReSub2API 是一个 AI API 网关平台，用于分发和管理 AI 产品订阅的 API 配额。用户通过平台生成的 API Key 调用上游 AI 服务，平台负责鉴权、计费、负载均衡和请求转发。
-
-## Fork 与上游同步
-
-ReSub2API 是 [Sub2API](https://github.com/Wei-Shaw/sub2api)（作者 Wei-Shaw）的 fork，按 LGPL-3.0 许可证发布。本 fork 基于上游 v0.2.25（commit `348997267d`），由 [FurWolf19](https://github.com/FurWolf19) 维护。
-
-本 fork 的改动限于：分组按订阅者独立的 5 小时限额、OpenAI API Key 的 `auto` 协议探测、订阅额度倍率、多时段高峰倍率，以及两个上游响应修复。数据库迁移 `253`-`256` 在启动时自动执行。
-
-本仓库中的上游是只读的。同步方式：
-
-```bash
-git remote add upstream https://github.com/Wei-Shaw/sub2api.git
-git fetch upstream
-git rebase upstream/main   # 或：git merge upstream/main
-```
-
-定时运行的 `upstream-watch` 工作流只读取上游最新 release；发现新版本时最多创建一个跟踪 issue，不会改代码、rebase 或推送。若仓库关闭了 Issues，则改为写入 job summary。
-
-不要向 `upstream` 推送。容易冲突的位置：`backend/internal/service/{group,subscription_service,user_subscription,...}.go`、`backend/internal/handler/admin/{group,subscription}_handler.go`、`frontend/src/views/admin/{GroupsView,SubscriptionsView}.vue`、`frontend/src/components/admin/group/GroupRateMultipliersModal.vue`、`frontend/src/types/index.ts`、`backend/ent/schema/{group,user_subscription}.go`。
-
-验证：`go build ./...`、`go test -tags=unit ./...`、`pnpm run typecheck`、`pnpm run build`、`pnpm run test:run`。
-
+ReSub2API 是一个面向 AI 订阅的 API 网关。它将订阅配额以平台生成的 API Key 形式分发和管理，并负责鉴权、计费、负载均衡与上游请求转发。
 
 ## 核心功能
 
@@ -66,13 +45,13 @@ git rebase upstream/main   # 或：git merge upstream/main
 
 ## 生态项目
 
-上游生态项目请参见 [上游 README](https://github.com/Wei-Shaw/sub2api#ecosystem)。本 fork 不单独维护生态项目列表。
+生态项目请参见 [上游 README](https://github.com/Wei-Shaw/sub2api#ecosystem)。
 
 ## 技术栈
 
 | 组件 | 技术 |
 |------|------|
-| 后端 | Go 1.27.0, Gin, Ent |
+| 后端 | Go 1.27.4, Gin, Ent |
 | 前端 | Vue 3.4+, Vite 5+, TailwindCSS |
 | 数据库 | PostgreSQL 15+ |
 | 缓存/队列 | Redis 7+ |
@@ -81,7 +60,7 @@ git rebase upstream/main   # 或：git merge upstream/main
 
 ## Nginx 反向代理注意事项
 
-通过 Nginx 反向代理 Sub2API（或 CRS 服务）并搭配 Codex CLI 使用时，需要在 Nginx 配置的 `http` 块中添加：
+通过 Nginx 反向代理 ReSub2API（或 CRS 服务）并搭配 Codex CLI 使用时，需要在 Nginx 配置的 `http` 块中添加：
 
 ```nginx
 underscores_in_headers on;
@@ -100,7 +79,7 @@ Nginx 默认会丢弃名称中含下划线的请求头（如 `session_id`），�
 - `block`：拒绝匹配的 Fast/Flex 请求。
 - `force_priority`：将匹配请求强制设置为 `priority`，会按 Priority/Fast 价格计费。为避免升级后改变既有规则语义，`all` 只匹配显式存在的 tier；如需让省略 `service_tier` 的 OpenAI 请求也强制升级，必须新增 `service_tier=missing + force_priority` 规则。非 OpenAI 平台不会执行缺省 tier 注入。这种方式可以让请求实际使用 Fast，但 Codex UI 仍可能不显示 Fast 状态。
 
-Codex 的 Fast 入口由客户端模型目录驱动。只有当前模型目录声明了 `additional_speed_tiers: ["fast"]` 和对应的 `service_tiers`，Codex 才会显示 `/fast`。通过 API Key 或自定义模型提供商连接 Sub2API 时，如果模型目录没有这些字段，即使后台配置了 `force_priority`，重启 Codex 后也不会出现 Speed 选项。
+Codex 的 Fast 入口由客户端模型目录驱动。只有当前模型目录声明了 `additional_speed_tiers: ["fast"]` 和对应的 `service_tiers`，Codex 才会显示 `/fast`。通过 API Key 或自定义模型提供商连接 ReSub2API 时，如果模型目录没有这些字段，即使后台配置了 `force_priority`，重启 Codex 后也不会出现 Speed 选项。
 
 客户端可在 `~/.codex/config.toml` 中直接指定默认请求级别：
 
@@ -111,17 +90,21 @@ service_tier = "fast"
 fast_mode = true
 ```
 
-其中 `service_tier = "fast"` 会让请求携带 Fast 设置；`features.fast_mode` 只启用客户端 Fast 功能。模型目录没有声明 Fast 能力时，`/fast` 仍可能不显示。可通过 Sub2API 使用记录确认最终 `service_tier` 是否为 `priority`。
+其中 `service_tier = "fast"` 会让请求携带 Fast 设置；`features.fast_mode` 只启用客户端 Fast 功能。模型目录没有声明 Fast 能力时，`/fast` 仍可能不显示。可通过 ReSub2API 使用记录确认最终 `service_tier` 是否为 `priority`。
 
 ---
 
 ## 部署方式
 
-### 方式一：脚本安装（暂不可用）
+### 方式一：脚本安装
 
-本 fork 尚未发布二进制 GitHub release。安装脚本会查询 `FurWolf19/resub2api`，在首个 release 发布前会失败。请改用 [Docker Compose](#方式二docker-compose推荐) 或 [源码编译](#方式四源码编译)。
+安装脚本会从 GitHub Releases 下载最新的 Linux amd64 版本、校验 SHA256，并注册 systemd 服务。
 
-管理后台的在线更新也需要等待本 fork 发布首个 release。在此之前，请通过拉取 fork 镜像或重新编译源码更新。
+```bash
+curl -sSL https://raw.githubusercontent.com/FurWolf19/resub2api/main/deploy/install.sh | sudo bash
+```
+
+管理后台的在线更新使用同一批 release 资产；手动安装与服务管理命令见 [deploy/README.md](deploy/README.md)。
 
 ---
 
@@ -306,7 +289,7 @@ rm -rf data/ postgres_data/ redis_data/
 
 ### 方式三：Apple container（macOS）
 
-Apple 芯片 Mac 在 macOS 26 上可使用 Apple `container` 1.1.0 或更高版本运行完整的 Sub2API、PostgreSQL 和 Redis：
+Apple 芯片 Mac 在 macOS 26 上可使用 Apple `container` 1.1.0 或更高版本运行完整的 ReSub2API、PostgreSQL 和 Redis：
 
 ```bash
 git clone https://github.com/FurWolf19/resub2api.git
@@ -326,7 +309,7 @@ cd resub2api/deploy
 
 #### 前置条件
 
-- Go 1.21+
+- Go 1.27.4+
 - Node.js 18+
 - PostgreSQL 15+
 - Redis 7+
@@ -402,7 +385,7 @@ default:
 - `security.response_headers.enabled` 可启用可配置响应头过滤（关闭时使用默认白名单）
 - `security.csp` 配置 Content-Security-Policy
 - `billing.circuit_breaker` 计费异常时 fail-closed
-- `security.trust_forwarded_ip_for_api_key_acl` 控制旧版原始转发头接管（为升级兼容默认开启）；关闭后严格使用 `server.trusted_proxies`，其中只应填写直接连接 Sub2API 的精确代理 CIDR
+- `security.trust_forwarded_ip_for_api_key_acl` 控制旧版原始转发头接管（为升级兼容默认开启）；关闭后严格使用 `server.trusted_proxies`，其中只应填写直接连接 ReSub2API 的精确代理 CIDR
 - `security.forwarded_client_ip_headers` 最多配置 16 个第三方 CDN 客户端 IP 请求头；仅在旧版接管开启时按顺序优先于内置请求头解析
 - `turnstile.required` 在 release 模式强制启用 Turnstile
 
@@ -562,7 +545,7 @@ OAuth / Setup Token 的 1.5、2、2.5 和 2.6 图片请求使用 Codex 原生 Im
 
 ## TypeSafe / Jev 使用说明
 
-Sub2API 支持使用 TypeSafe API Key 账户，通过 Jev 原生、非流式的 System One 协议调用模型。
+ReSub2API 支持使用 TypeSafe API Key 账户，通过 Jev 原生、非流式的 System One 协议调用模型。
 
 - 平台：`typesafe`；账号类型：API Key
 - 默认上游：`https://api.typesafe.ai`
@@ -587,7 +570,7 @@ curl https://your-sub2api.example.com/v1/systemone \
 
 ## Antigravity 使用说明
 
-Sub2API 支持 [Antigravity](https://antigravity.so/) 账户，授权后可通过专用端点访问 Claude 和 Gemini 模型。
+ReSub2API 支持 [Antigravity](https://antigravity.so/) 账户，授权后可通过专用端点访问 Claude 和 Gemini 模型。
 
 ### 专用端点
 
@@ -641,18 +624,14 @@ sub2api/
 
 ---
 
-## 许可证
+## 致谢
 
-本项目基于 [GNU 宽通用公共许可证 v3.0](LICENSE)（或更高版本）授权。
-
-Copyright (c) 2026 Wesley Liddick
-
-Fork maintenance: Copyright (c) 2026 FurWolf19.
+ReSub2API 基于 Wei-Shaw 及贡献者开发的 [Sub2API](https://github.com/Wei-Shaw/sub2api)，依据 [LGPL-3.0](LICENSE) 许可证发布。修改部分版权归 [FurWolf19](https://github.com/FurWolf19) 所有（2026）。
 
 ---
 
 <div align="center">
 
-**如果觉得有用，请给 [fork 一个 Star](https://github.com/FurWolf19/resub2api)！**
+**如果觉得本项目有用，欢迎在 [GitHub](https://github.com/FurWolf19/resub2api) 上点个 Star！**
 
 </div>

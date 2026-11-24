@@ -4,11 +4,11 @@
 
 # ReSub2API
 
-[![Go](https://img.shields.io/badge/Go-1.27.0-00ADD8.svg)](https://golang.org/)
+[![Go](https://img.shields.io/badge/Go-1.27.4-00ADD8.svg)](https://golang.org/)
 [![Vue](https://img.shields.io/badge/Vue-3.4+-4FC08D.svg)](https://vuejs.org/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15+-336791.svg)](https://www.postgresql.org/)
 [![Redis](https://img.shields.io/badge/Redis-7+-DC382D.svg)](https://redis.io/)
-[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED.svg)](https://www.docker.com/)
+[![Docker](https://img.shields.io/badge/Docker-njmlp%2Fresub2api-2496ED.svg)](https://hub.docker.com/r/njmlp/resub2api)
 
 **サブスクリプションクォータ配分のための AI API ゲートウェイプラットフォーム**
 
@@ -28,28 +28,7 @@
 
 ## 概要
 
-ReSub2API は、AI 製品のサブスクリプションから API クォータを配分・管理するために設計された AI API ゲートウェイプラットフォームです。ユーザーはプラットフォームが生成した API キーを通じて上流の AI サービスにアクセスでき、プラットフォームは認証、課金、負荷分散、リクエスト転送を処理します。
-
-## フォークと上流同期
-
-ReSub2API は [Sub2API](https://github.com/Wei-Shaw/sub2api)（Wei-Shaw 作）のフォークであり、LGPL-3.0 ライセンスで公開されています。本フォークは上流 v0.2.25（commit `348997267d`）を基にしており、[FurWolf19](https://github.com/FurWolf19) が維持しています。
-
-本フォーク独自の変更は、グループごとの購読者別 5 時間制限、OpenAI API Key の `auto` プロトコル判定、購読クォータ倍率、複数のピーク時間帯、上流レスポンスの 2 件の修正に限られます。データベースマイグレーション `253`-`256` は起動時に自動実行されます。
-
-本リポジトリでは上流は読み取り専用です。同期方法：
-
-```bash
-git remote add upstream https://github.com/Wei-Shaw/sub2api.git
-git fetch upstream
-git rebase upstream/main   # または git merge upstream/main
-```
-
-スケジュール実行される `upstream-watch` ワークフローは上流の最新 release を読むだけで、新しいバージョンがあれば追跡 issue を最大 1 件作成します。コード変更、rebase、push は行いません。Issues が無効な場合は job summary に通知します。
-
-`upstream` へ push しないでください。コンフリクトしやすい箇所: `backend/internal/service/{group,subscription_service,user_subscription,...}.go`、`backend/internal/handler/admin/{group,subscription}_handler.go`、`frontend/src/views/admin/{GroupsView,SubscriptionsView}.vue`、`frontend/src/components/admin/group/GroupRateMultipliersModal.vue`、`frontend/src/types/index.ts`、`backend/ent/schema/{group,user_subscription}.go`。
-
-検証: `go build ./...`、`go test -tags=unit ./...`、`pnpm run typecheck`、`pnpm run build`、`pnpm run test:run`。
-
+ReSub2API は AI サブスクリプション向けの API ゲートウェイです。サブスクリプションのクォータを API キーとして配分・管理し、認証、課金、負荷分散、上流へのリクエスト転送を担います。
 
 ## 機能
 
@@ -65,13 +44,13 @@ git rebase upstream/main   # または git merge upstream/main
 
 ## エコシステム
 
-上流のエコシステムプロジェクトは [上流 README](https://github.com/Wei-Shaw/sub2api#ecosystem) を参照してください。本フォークは独自のエコシステム一覧を維持していません。
+エコシステムプロジェクトは [上流 README](https://github.com/Wei-Shaw/sub2api#ecosystem) に掲載されています。
 
 ## 技術スタック
 
 | コンポーネント | 技術 |
 |-----------|------------|
-| バックエンド | Go 1.27.0, Gin, Ent |
+| バックエンド | Go 1.27.4, Gin, Ent |
 | フロントエンド | Vue 3.4+, Vite 5+, TailwindCSS |
 | データベース | PostgreSQL 15+ |
 | キャッシュ/キュー | Redis 7+ |
@@ -80,7 +59,7 @@ git rebase upstream/main   # または git merge upstream/main
 
 ## Nginx リバースプロキシに関する注意
 
-Sub2API（または CRS）を Nginx でリバースプロキシし、Codex CLI と組み合わせて使用する場合、Nginx の `http` ブロックに以下の設定を追加してください:
+ReSub2API（または CRS）を Nginx でリバースプロキシし、Codex CLI と組み合わせて使用する場合、Nginx の `http` ブロックに以下の設定を追加してください:
 
 ```nginx
 underscores_in_headers on;
@@ -92,11 +71,15 @@ Nginx はデフォルトでアンダースコアを含むヘッダー（例: `se
 
 ## デプロイ
 
-### 方法1: スクリプトによるインストール（未提供）
+### 方法1: スクリプトによるインストール
 
-本フォークはまだバイナリの GitHub release を公開していません。インストーラーは `FurWolf19/resub2api` を参照するため、最初の release が公開されるまで失敗します。[Docker Compose](#方法2-docker-compose推奨) または [ソースからのビルド](#方法4-ソースからビルド) を使用してください。
+インストーラーは GitHub Releases から最新の Linux amd64 版をダウンロードして SHA256 を検証し、systemd サービスを登録します。
 
-管理ダッシュボードのインプレース更新も、本フォークが最初の release を公開するまで利用できません。それまではフォークイメージを取得するか、ソースから再ビルドして更新してください。
+```bash
+curl -sSL https://raw.githubusercontent.com/FurWolf19/resub2api/main/deploy/install.sh | sudo bash
+```
+
+管理ダッシュボードからのインプレース更新も同じリリース資産を使用します。手動インストールとサービス管理のコマンドは [deploy/README.md](deploy/README.md) を参照してください。
 
 ---
 
@@ -269,7 +252,7 @@ rm -rf data/ postgres_data/ redis_data/
 
 ### 方法3: Apple container（macOS）
 
-Apple シリコン搭載 Mac と macOS 26 では、Apple `container` 1.1.0 以降を使用して Sub2API、PostgreSQL、Redis の完全なスタックを実行できます:
+Apple シリコン搭載 Mac と macOS 26 では、Apple `container` 1.1.0 以降を使用して ReSub2API、PostgreSQL、Redis の完全なスタックを実行できます:
 
 ```bash
 git clone https://github.com/FurWolf19/resub2api.git
@@ -289,7 +272,7 @@ cd resub2api/deploy
 
 #### 前提条件
 
-- Go 1.21+
+- Go 1.27.4+
 - Node.js 18+
 - PostgreSQL 15+
 - Redis 7+
@@ -365,7 +348,7 @@ default:
 - `security.response_headers.enabled` - 設定可能なレスポンスヘッダーフィルタリングを有効化（無効時はデフォルトの許可リストを使用）
 - `security.csp` - Content-Security-Policy ヘッダーの制御
 - `billing.circuit_breaker` - 課金エラー時にフェイルクローズ
-- `security.trust_forwarded_ip_for_api_key_acl` - 従来の生転送ヘッダーによる上書きを制御（アップグレード互換性のため既定で有効）。無効にすると `server.trusted_proxies` を厳格に使用し、Sub2API に直接接続するプロキシの正確な CIDR のみを指定
+- `security.trust_forwarded_ip_for_api_key_acl` - 従来の生転送ヘッダーによる上書きを制御（アップグレード互換性のため既定で有効）。無効にすると `server.trusted_proxies` を厳格に使用し、ReSub2API に直接接続するプロキシの正確な CIDR のみを指定
 - `security.forwarded_client_ip_headers` - サードパーティ CDN のクライアント IP ヘッダーを最大 16 個指定。従来モードが有効な場合のみ、設定順で組み込みヘッダーより先に評価
 - `turnstile.required` - リリースモードでの Turnstile 必須化
 
@@ -477,7 +460,7 @@ go generate ./cmd/server
 
 ## Antigravity サポート
 
-Sub2API は [Antigravity](https://antigravity.so/) アカウントをサポートしています。認証後、Claude および Gemini モデル用の専用エンドポイントが利用可能になります。
+ReSub2API は [Antigravity](https://antigravity.so/) アカウントをサポートしています。認証後、Claude および Gemini モデル用の専用エンドポイントが利用可能になります。
 
 ### 専用エンドポイント
 
@@ -531,18 +514,14 @@ sub2api/
 
 ---
 
-## ライセンス
+## クレジット
 
-本プロジェクトは [GNU Lesser General Public License v3.0](LICENSE)（またはそれ以降のバージョン）の下でライセンスされています。
-
-Copyright (c) 2026 Wesley Liddick
-
-Fork maintenance: Copyright (c) 2026 FurWolf19.
+ReSub2API は Wei-Shaw とコントリビューターによる [Sub2API](https://github.com/Wei-Shaw/sub2api) を基に、[LGPL-3.0](LICENSE) ライセンスで提供されています。改変部分の著作権は [FurWolf19](https://github.com/FurWolf19)（2026）に帰属します。
 
 ---
 
 <div align="center">
 
-**このプロジェクトが役に立ったら、ぜひ [fork にスター](https://github.com/FurWolf19/resub2api) をお願いします！**
+**本プロジェクトが役に立ったら、[GitHub](https://github.com/FurWolf19/resub2api) でスターを付けていただけると嬉しいです！**
 
 </div>

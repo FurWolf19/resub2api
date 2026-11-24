@@ -395,7 +395,7 @@ GEMINI_OAUTH_CLIENT_SECRET=GOCSPX-your-client-secret
 
 For production servers using systemd.
 
-> **No fork binary release yet.** This path becomes usable after `FurWolf19/resub2api` publishes its first GitHub release. Until then, use Docker Compose or build from source.
+> Prebuilt Linux amd64 binaries are available on [GitHub Releases](https://github.com/FurWolf19/resub2api/releases).
 
 ### One-Line Installation
 

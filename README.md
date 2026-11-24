@@ -4,11 +4,11 @@
 
 # ReSub2API
 
-[![Go](https://img.shields.io/badge/Go-1.27.0-00ADD8.svg)](https://golang.org/)
+[![Go](https://img.shields.io/badge/Go-1.27.4-00ADD8.svg)](https://golang.org/)
 [![Vue](https://img.shields.io/badge/Vue-3.4+-4FC08D.svg)](https://vuejs.org/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15+-336791.svg)](https://www.postgresql.org/)
 [![Redis](https://img.shields.io/badge/Redis-7+-DC382D.svg)](https://redis.io/)
-[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED.svg)](https://www.docker.com/)
+[![Docker](https://img.shields.io/badge/Docker-njmlp%2Fresub2api-2496ED.svg)](https://hub.docker.com/r/njmlp/resub2api)
 
 **AI API Gateway Platform for Subscription Quota Distribution**
 
@@ -28,28 +28,7 @@ Please read the following carefully before using this project:
 
 ## Overview
 
-ReSub2API is an AI API gateway platform designed to distribute and manage API quotas from AI product subscriptions. Users can access upstream AI services through platform-generated API Keys, while the platform handles authentication, billing, load balancing, and request forwarding.
-
-## Fork & upstream sync
-
-ReSub2API is a fork of [Sub2API](https://github.com/Wei-Shaw/sub2api) by Wei-Shaw, released under the LGPL-3.0 license. This fork is based on upstream v0.2.25 (commit `348997267d`) and is maintained by [FurWolf19](https://github.com/FurWolf19).
-
-Fork-only changes are limited to the subscription 5-hour limit, the OpenAI `auto` protocol probe, the subscription quota multiplier, multiple peak-rate windows, and two upstream-response fixes. Database migrations `253`-`256` are applied automatically on startup.
-
-Upstream is read-only in this repository. To sync:
-
-```bash
-git remote add upstream https://github.com/Wei-Shaw/sub2api.git
-git fetch upstream
-git rebase upstream/main   # or: git merge upstream/main
-```
-
-A scheduled `upstream-watch` workflow reads the upstream latest release and opens at most one tracking issue when a new version appears; it never changes code, rebases, or pushes. If Issues are disabled, it writes the notice to the job summary instead.
-
-Never push to `upstream`. Likely conflict hotspots: `backend/internal/service/{group,subscription_service,user_subscription,...}.go`, `backend/internal/handler/admin/{group,subscription}_handler.go`, `frontend/src/views/admin/{GroupsView,SubscriptionsView}.vue`, `frontend/src/components/admin/group/GroupRateMultipliersModal.vue`, `frontend/src/types/index.ts`, `backend/ent/schema/{group,user_subscription}.go`.
-
-Verification: `go build ./...`, `go test -tags=unit ./...`, `pnpm run typecheck`, `pnpm run build`, `pnpm run test:run`.
-
+ReSub2API is an API gateway for AI subscriptions. It distributes subscription quotas through platform-generated API Keys and handles authentication, billing, load balancing, and request forwarding to upstream AI services.
 
 ## Features
 
@@ -66,13 +45,13 @@ Verification: `go build ./...`, `go test -tags=unit ./...`, `pnpm run typecheck`
 
 ## Ecosystem
 
-Upstream ecosystem projects are listed in the [upstream README](https://github.com/Wei-Shaw/sub2api#ecosystem). This fork does not maintain a separate ecosystem list.
+Ecosystem projects are listed in the [upstream README](https://github.com/Wei-Shaw/sub2api#ecosystem).
 
 ## Tech Stack
 
 | Component | Technology |
 |-----------|------------|
-| Backend | Go 1.27.0, Gin, Ent |
+| Backend | Go 1.27.4, Gin, Ent |
 | Frontend | Vue 3.4+, Vite 5+, TailwindCSS |
 | Database | PostgreSQL 15+ |
 | Cache/Queue | Redis 7+ |
@@ -81,7 +60,7 @@ Upstream ecosystem projects are listed in the [upstream README](https://github.c
 
 ## Nginx Reverse Proxy Note
 
-When using Nginx as a reverse proxy for Sub2API (or CRS) with Codex CLI, add the following to the `http` block in your Nginx configuration:
+When using Nginx as a reverse proxy for ReSub2API (or CRS) with Codex CLI, add the following to the `http` block in your Nginx configuration:
 
 ```nginx
 underscores_in_headers on;
@@ -93,11 +72,15 @@ Nginx drops headers containing underscores by default (e.g. `session_id`), which
 
 ## Deployment
 
-### Method 1: Script Installation (not available yet)
+### Method 1: Script Installation
 
-This fork has not published a binary GitHub release yet. The installer would query `FurWolf19/resub2api` and fail until the first release exists. Use [Docker Compose](#method-2-docker-compose-recommended) or [build from source](#method-4-build-from-source) instead.
+The installer downloads the latest Linux amd64 release, verifies its checksum, and registers a systemd service.
 
-In-place updates from the admin dashboard will also become available after the fork publishes its first release. Until then, update by pulling the fork image or rebuilding from source.
+```bash
+curl -sSL https://raw.githubusercontent.com/FurWolf19/resub2api/main/deploy/install.sh | sudo bash
+```
+
+In-place updates from the admin dashboard use the same release assets. See [deploy/README.md](deploy/README.md) for manual installation and service commands.
 
 ---
 
@@ -270,7 +253,7 @@ rm -rf data/ postgres_data/ redis_data/
 
 ### Method 3: Apple container (macOS)
 
-Apple-silicon Macs running macOS 26 can run the full Sub2API, PostgreSQL, and Redis stack with Apple `container` 1.1.0 or newer:
+Apple-silicon Macs running macOS 26 can run the full ReSub2API, PostgreSQL, and Redis stack with Apple `container` 1.1.0 or newer:
 
 ```bash
 git clone https://github.com/FurWolf19/resub2api.git
@@ -290,7 +273,7 @@ Build and run from source code for development or customization.
 
 #### Prerequisites
 
-- Go 1.21+
+- Go 1.27.4+
 - Node.js 18+
 - PostgreSQL 15+
 - Redis 7+
@@ -367,7 +350,7 @@ Additional security-related options are available in `config.yaml`:
 - `security.response_headers.enabled` to enable configurable response header filtering (disabled uses default allowlist)
 - `security.csp` to control Content-Security-Policy headers
 - `billing.circuit_breaker` to fail closed on billing errors
-- `security.trust_forwarded_ip_for_api_key_acl` enables legacy raw forwarded-header takeover (enabled by default for upgrade compatibility); disable it to enforce `server.trusted_proxies`, which should contain only the exact proxy CIDRs that connect directly to Sub2API
+- `security.trust_forwarded_ip_for_api_key_acl` enables legacy raw forwarded-header takeover (enabled by default for upgrade compatibility); disable it to enforce `server.trusted_proxies`, which should contain only the exact proxy CIDRs that connect directly to ReSub2API
 - `security.forwarded_client_ip_headers` configures up to 16 third-party CDN client-IP header names; they are checked in order before the built-in headers only while legacy takeover is enabled
 - `turnstile.required` to require Turnstile in release mode
 
@@ -550,7 +533,7 @@ Simple Mode is designed for individual developers or internal teams who want qui
 
 On `/v1/images/generations` and `/v1/images/edits`, OAuth / Setup Token requests use the Codex-native Images endpoints when the mapped upstream model is a supported GPT Image 1.5, 2, 2.5, or 2.6 model. Models before 2.6 can fall back to Responses if the native endpoint returns 404 or 405.
 
-Sub2API forwards `output_format` and `output_compression`, but whether they take effect depends on the upstream account and endpoint. An upstream may reject a format with a 4xx error or return HTTP 200 with a different format: for example, requesting `jpeg` or `svg` can yield `output_format: "png"` and PNG data. This behavior has also been reported for `gpt-image-2.5-flare` requests for `jpeg`.
+ReSub2API forwards `output_format` and `output_compression`, but whether they take effect depends on the upstream account and endpoint. An upstream may reject a format with a 4xx error or return HTTP 200 with a different format: for example, requesting `jpeg` or `svg` can yield `output_format: "png"` and PNG data. This behavior has also been reported for `gpt-image-2.5-flare` requests for `jpeg`.
 
 Before saving or serving an image, compare the returned `output_format` (including any per-image value) with the request and verify the actual image format. Use the actual output format for the filename extension and MIME type. A successful response containing a different format retains its status, image content, and usage; it can still incur charges. Automatically retrying may generate and bill another image.
 
@@ -564,7 +547,7 @@ Long-running OpenAI/Grok image generation and editing can be submitted through `
 
 ## Grok / xAI Support
 
-Sub2API supports both Grok subscription accounts through xAI OAuth and standard xAI API-key accounts. Both account types forward OpenAI-compatible Responses traffic to xAI.
+ReSub2API supports both Grok subscription accounts through xAI OAuth and standard xAI API-key accounts. Both account types forward OpenAI-compatible Responses traffic to xAI.
 
 ### Supported Scope
 
@@ -609,8 +592,8 @@ For API-key accounts, select **Grok → API Key** in the create-account dialog. 
 
 ### Grok Build CLI Configuration
 
-1. In the Sub2API admin dashboard, add either a `grok` OAuth account and complete xAI authorization, or add a Grok API-key account.
-2. Create a Grok group, attach the account to it, then create a Sub2API API key assigned to that group.
+1. In the ReSub2API admin dashboard, add either a `grok` OAuth account and complete xAI authorization, or add a Grok API-key account.
+2. Create a Grok group, attach the account to it, then create a ReSub2API API key assigned to that group.
 3. In the user API-key page, click **Use Key** and select **Grok CLI**. The modal generates the correct file and base URL for macOS/Linux or Windows. It also provides an OpenCode configuration on the **OpenCode** tab.
 4. If configuring manually, save the following as `~/.grok/config.toml` (Windows: `%USERPROFILE%\.grok\config.toml`):
 
@@ -629,18 +612,18 @@ context_window = 1000000
 supports_backend_search = true
 ```
 
-Back up an existing `config.toml` before merging the entry. The file contains a Sub2API API key, so keep it private and restrict its permissions where supported. Verify the effective configuration and make a smoke request:
+Back up an existing `config.toml` before merging the entry. The file contains a ReSub2API API key, so keep it private and restrict its permissions where supported. Verify the effective configuration and make a smoke request:
 
 ```bash
 grok inspect
 grok -p "Reply with sub2api-ok" -m grok
 ```
 
-The `base_url` above is the public Sub2API URL ending in `/v1`, not `api.x.ai` or the internal xAI OAuth proxy URL.
+The `base_url` above is the public ReSub2API URL ending in `/v1`, not `api.x.ai` or the internal xAI OAuth proxy URL.
 
 ### Usage And Quota Display
 
-xAI quota is passive. Sub2API does not invent subscription quota values; it records whitelisted xAI rate-limit headers from successful or rate-limited upstream responses when xAI sends them. Before the first usable upstream response, the dashboard shows quota as unknown and still displays local Sub2API usage stats.
+xAI quota is passive. ReSub2API does not invent subscription quota values; it records whitelisted xAI rate-limit headers from successful or rate-limited upstream responses when xAI sends them. Before the first usable upstream response, the dashboard shows quota as unknown and still displays local ReSub2API usage stats.
 
 `401` responses temporarily remove accounts with invalid credentials from scheduling. `403` responses are treated as access or entitlement failures instead of token-refresh loops. `429` responses use `Retry-After` or a short cooldown to temporarily remove the account from scheduling.
 
@@ -652,7 +635,7 @@ Administrators can override automatic media eligibility through the account crea
 
 ## TypeSafe / Jev Support
 
-Sub2API supports TypeSafe API-key accounts through Jev's native, non-streaming System One protocol.
+ReSub2API supports TypeSafe API-key accounts through Jev's native, non-streaming System One protocol.
 
 - Platform: `typesafe`; account type: API Key
 - Default upstream: `https://api.typesafe.ai`
@@ -677,7 +660,7 @@ The built-in `jev-latest` price is `$0.042` per million input tokens and `$0` fo
 
 ## Antigravity Support
 
-Sub2API supports [Antigravity](https://antigravity.so/) accounts. After authorization, dedicated endpoints are available for Claude and Gemini models.
+ReSub2API supports [Antigravity](https://antigravity.so/) accounts. After authorization, dedicated endpoints are available for Claude and Gemini models.
 
 ### Dedicated Endpoints
 
@@ -731,18 +714,14 @@ sub2api/
 
 ---
 
-## License
+## Credits
 
-This project is licensed under the [GNU Lesser General Public License v3.0](LICENSE) (or later).
-
-Copyright (c) 2026 Wesley Liddick
-
-Fork maintenance: Copyright (c) 2026 FurWolf19.
+ReSub2API is based on [Sub2API](https://github.com/Wei-Shaw/sub2api) by Wei-Shaw and contributors, licensed under [LGPL-3.0](LICENSE). Modifications Copyright (c) 2026 [FurWolf19](https://github.com/FurWolf19).
 
 ---
 
 <div align="center">
 
-**If you find this project useful, please give the [fork a star](https://github.com/FurWolf19/resub2api)!**
+**If you find this project useful, please give it a star on [GitHub](https://github.com/FurWolf19/resub2api)!**
 
 </div>

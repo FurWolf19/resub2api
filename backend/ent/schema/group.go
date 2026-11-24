@@ -68,7 +68,7 @@ func (Group) Fields() []ent.Field {
 			SchemaType(map[string]string{dialect.Postgres: "decimal(10,4)"}).
 			Default(1.0).
 			Comment("高峰时段叠加倍率，仅在 peak_rate_enabled 且处于 [peak_start, peak_end) 时乘入文本倍率"),
-		// 多时段高峰倍率（added by migration 253）；非空时优先于旧单时段字段。
+		// 多时段高峰倍率；非空时优先于旧单时段字段。
 		field.JSON("peak_rate_windows", []domain.PeakRateWindow{}).
 			Default([]domain.PeakRateWindow{}).
 			SchemaType(map[string]string{dialect.Postgres: "jsonb"}).

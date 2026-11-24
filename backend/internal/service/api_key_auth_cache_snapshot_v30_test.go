@@ -9,7 +9,7 @@ import (
 )
 
 // TestAPIKeyAuthSnapshotV30MergedGroupFields 校验 v30 快照同时保留官方
-// force_openai_ultrafast 与 fork 的 five_hour_limit_usd / peak_rate_windows。
+// force_openai_ultrafast 与 five_hour_limit_usd / peak_rate_windows。
 func TestAPIKeyAuthSnapshotV30MergedGroupFields(t *testing.T) {
 	groupID := int64(52)
 	fiveHour := 12.5

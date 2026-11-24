@@ -160,8 +160,8 @@ func (s *UpdateService) CheckUpdate(ctx context.Context, force bool) (*UpdateInf
 
 	upstream := s.fetchUpstreamRelease(ctx)
 
-	// Fetch this fork's release. A missing release is a normal state before the
-	// fork publishes its first version, not an API failure.
+	// Fetch this fork's release; a missing release is reported as an API error.
+	// PerformUpdate returns ErrNoReleasePublished when no fork release is available.
 	info, err := s.fetchLatestRelease(ctx)
 	if err != nil {
 		// Return cached fork data on error, but keep the fresh upstream notice.
