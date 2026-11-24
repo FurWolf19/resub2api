@@ -33,7 +33,7 @@ ReSub2API 是一个 AI API 网关平台，用于分发和管理 AI 产品订阅�
 
 ## Fork 与上游同步
 
-ReSub2API 是 [Sub2API](https://github.com/Wei-Shaw/sub2api)（作者 Wei-Shaw）的 fork，按 LGPL-3.0 许可证发布。本 fork 基于上游 v0.2.24（commit `5c2982a8`），由 [FurWolf19](https://github.com/FurWolf19) 维护。
+ReSub2API 是 [Sub2API](https://github.com/Wei-Shaw/sub2api)（作者 Wei-Shaw）的 fork，按 LGPL-3.0 许可证发布。本 fork 基于上游 v0.2.25（commit `348997267d`），由 [FurWolf19](https://github.com/FurWolf19) 维护。
 
 本 fork 的改动限于：分组按订阅者独立的 5 小时限额、OpenAI API Key 的 `auto` 协议探测、订阅额度倍率、多时段高峰倍率，以及两个上游响应修复。数据库迁移 `253`-`256` 在启动时自动执行。
 

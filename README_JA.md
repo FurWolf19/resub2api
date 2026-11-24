@@ -32,7 +32,7 @@ ReSub2API は、AI 製品のサブスクリプションから API クォータ�
 
 ## フォークと上流同期
 
-ReSub2API は [Sub2API](https://github.com/Wei-Shaw/sub2api)（Wei-Shaw 作）のフォークであり、LGPL-3.0 ライセンスで公開されています。本フォークは上流 v0.2.24（commit `5c2982a8`）を基にしており、[FurWolf19](https://github.com/FurWolf19) が維持しています。
+ReSub2API は [Sub2API](https://github.com/Wei-Shaw/sub2api)（Wei-Shaw 作）のフォークであり、LGPL-3.0 ライセンスで公開されています。本フォークは上流 v0.2.25（commit `348997267d`）を基にしており、[FurWolf19](https://github.com/FurWolf19) が維持しています。
 
 本フォーク独自の変更は、グループごとの購読者別 5 時間制限、OpenAI API Key の `auto` プロトコル判定、購読クォータ倍率、複数のピーク時間帯、上流レスポンスの 2 件の修正に限られます。データベースマイグレーション `253`-`256` は起動時に自動実行されます。
 

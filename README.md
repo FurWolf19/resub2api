@@ -32,7 +32,7 @@ ReSub2API is an AI API gateway platform designed to distribute and manage API qu
 
 ## Fork & upstream sync
 
-ReSub2API is a fork of [Sub2API](https://github.com/Wei-Shaw/sub2api) by Wei-Shaw, released under the LGPL-3.0 license. This fork is based on upstream v0.2.24 (commit `5c2982a8`) and is maintained by [FurWolf19](https://github.com/FurWolf19).
+ReSub2API is a fork of [Sub2API](https://github.com/Wei-Shaw/sub2api) by Wei-Shaw, released under the LGPL-3.0 license. This fork is based on upstream v0.2.25 (commit `348997267d`) and is maintained by [FurWolf19](https://github.com/FurWolf19).
 
 Fork-only changes are limited to the subscription 5-hour limit, the OpenAI `auto` protocol probe, the subscription quota multiplier, multiple peak-rate windows, and two upstream-response fixes. Database migrations `253`-`256` are applied automatically on startup.
 

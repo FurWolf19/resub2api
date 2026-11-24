@@ -10,7 +10,7 @@ docker run -d \
   -p 8080:8080 \
   -e DATABASE_URL="postgres://user:pass@host:5432/sub2api" \
   -e REDIS_URL="redis://host:6379" \
-  njmlp/resub2api:v0.2.24
+  njmlp/resub2api:v0.2.25
 ```
 
 ## Docker Compose
@@ -20,7 +20,7 @@ version: '3.8'
 
 services:
   sub2api:
-    image: njmlp/resub2api:v0.2.24
+    image: njmlp/resub2api:v0.2.25
     ports:
       - "8080:8080"
     environment:
@@ -82,7 +82,7 @@ Check the published `njmlp/resub2api` manifest for the tag you deploy; the fork 
 ## Tags
 
 - `latest` - Latest stable fork image
-- `v0.2.24` - Specific fork version
+- `v0.2.25` - Specific fork version
 - `v0.2` - Latest patch of a minor version
 - `v0` - Latest minor of a major version
 
