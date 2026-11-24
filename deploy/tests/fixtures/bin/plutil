@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Linux CI shim for the subset of plutil used by deploy/apple-container.sh.
+# macOS keeps using the system plutil.
+set -euo pipefail
+
+if [[ "$(uname -s)" != "Linux" ]]; then
+    exec /usr/bin/plutil "$@"
+fi
+
+usage_error() {
+    printf 'plutil shim: unsupported arguments\n' >&2
+    exit 1
+}
+
+[[ "${1:-}" == "-extract" ]] || usage_error
+[[ $# -eq 6 ]] || usage_error
+[[ "${4}" == "-o" && "${5}" == "-" && "${6}" == "-" ]] || usage_error
+case "${3}" in
+    raw|json) ;;
+    *) usage_error ;;
+esac
+keypath=$2
+format=$3
+
+exec python3 -c '
+import json, sys
+path, fmt = sys.argv[1], sys.argv[2]
+value = json.load(sys.stdin)
+for part in path.split("."):
+    if isinstance(value, list):
+        value = value[int(part)]
+    else:
+        value = value[part]
+if fmt == "json":
+    json.dump(value, sys.stdout, separators=(",", ":"))
+    sys.stdout.write("\n")
+else:
+    print(value)
+' "${keypath}" "${format}"
