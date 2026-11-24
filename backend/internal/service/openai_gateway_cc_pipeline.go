@@ -217,6 +217,18 @@ func (s *OpenAIGatewayService) sendCCUpstreamRequest(
 	// 字段，上游 400 "The `reasoning_content` in the thinking mode must be
 	// passed back to the API"。在共用出站点补空格占位，真实明文不覆盖。
 	body = ensureDeepSeekChatReasoningPlaceholders(account, body)
+	// Mistral 的 Chat Completions 拒绝 assistant 历史里的 reasoning 回放字段
+	// （422 extra_forbidden）。三条 CC 出站路径都经过这里，按目标 host 剥离，
+	// 覆盖 /v1/responses 与 /v1/messages 回退以及原生 Chat。剥离失败时保留
+	// 原请求继续发送，不因本地改写问题阻断转发。
+	if chatUpstreamRejectsReasoningFields(targetURL) {
+		stripped, stripErr := stripChatReasoningFields(body)
+		if stripErr != nil {
+			logger.L().Warn("strip chat reasoning fields for Mistral chat upstream", zap.Error(stripErr))
+		} else {
+			body = stripped
+		}
+	}
 	upstreamCtx, releaseUpstreamCtx := detachUpstreamContext(ctx)
 	upstreamReq, err := http.NewRequestWithContext(upstreamCtx, http.MethodPost, targetURL, bytes.NewReader(body))
 	releaseUpstreamCtx()
