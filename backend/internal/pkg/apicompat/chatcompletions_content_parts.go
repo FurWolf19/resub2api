@@ -78,7 +78,9 @@ func (d *ChatDelta) UnmarshalJSON(data []byte) error {
 		return nil
 	}
 
-	visible, reasoning, hasVisible, hasReasoning := chatContentArrayPartsDetailed(raw)
+	// A streaming delta's parts belong to the same increment: inserting a
+	// separator would fabricate paragraph breaks inside one token span.
+	visible, reasoning, hasVisible, hasReasoning := chatContentArrayPartsDetailed(raw, "")
 	if hasVisible {
 		d.Content = &visible
 	}
@@ -96,14 +98,17 @@ func (d *ChatDelta) UnmarshalJSON(data []byte) error {
 }
 
 func chatContentArrayParts(raw json.RawMessage) (visible, reasoning string) {
-	visible, reasoning, _, _ = chatContentArrayPartsDetailed(raw)
+	visible, reasoning, _, _ = chatContentArrayPartsDetailed(raw, "\n\n")
 	return visible, reasoning
 }
 
 // chatContentArrayPartsDetailed splits array content into visible text and
 // reasoning text. Unknown part types are ignored: they are neither promoted to
-// visible content nor turned into reasoning.
-func chatContentArrayPartsDetailed(raw json.RawMessage) (visible, reasoning string, hasVisible, hasReasoning bool) {
+// visible content nor turned into reasoning. textSeparator joins multiple
+// visible parts: non-streaming messages use "\n\n" (matching
+// chatMessageContentText), streaming deltas use "" to avoid injecting paragraph
+// breaks into an increment.
+func chatContentArrayPartsDetailed(raw json.RawMessage, textSeparator string) (visible, reasoning string, hasVisible, hasReasoning bool) {
 	var parts []json.RawMessage
 	if err := json.Unmarshal(raw, &parts); err != nil {
 		return "", "", false, false
@@ -127,6 +132,9 @@ func chatContentArrayPartsDetailed(raw json.RawMessage) (visible, reasoning stri
 			if text == "" {
 				continue
 			}
+			if hasVisible {
+				visibleBuilder.WriteString(textSeparator)
+			}
 			hasVisible = true
 			visibleBuilder.WriteString(text)
 		}
@@ -138,12 +146,14 @@ func chatContentArrayPartsDetailed(raw json.RawMessage) (visible, reasoning stri
 // string or an array of {"type":"text","text":"..."} entries (Mistral). The
 // "closed" flag is deliberately ignored.
 func chatContentPartReasoning(part map[string]json.RawMessage) string {
-	if raw, ok := part["thinking"]; ok {
-		if text := chatNestedText(raw); text != "" {
-			return text
+	for _, key := range []string{"thinking", "reasoning"} {
+		if raw, ok := part[key]; ok {
+			if text := chatNestedText(raw); text != "" {
+				return text
+			}
 		}
 	}
-	return rawString(part["text"])
+	return chatNestedText(part["text"])
 }
 
 func chatNestedText(raw json.RawMessage) string {

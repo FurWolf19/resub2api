@@ -475,8 +475,8 @@ func isDeepSeekCatalogModel(model string) bool {
 	return strings.HasPrefix(normalizeOpenCodeGoModelID(model), "deepseek")
 }
 
-// requiresDeepSeekChatReasoning 报告该 Chat Completions 请求的上游是否按
-// DeepSeek thinking mode 语义校验 reasoning_content。
+// requiresDeepSeekChatReasoningForModel 报告该模型的上游是否按 DeepSeek
+// thinking mode 语义校验 reasoning_content。
 //
 // DeepSeek 官方 API 直接命中。OpenCode Zen / Go 是转发型订阅网关：deepseek-*
 // 模型由 DeepSeek 实际承载，同一条 400 原文会被一字不差地回吐，所以按
@@ -484,14 +484,20 @@ func isDeepSeekCatalogModel(model string) bool {
 //
 // 不放宽成「任意上游的 deepseek-* 模型名」：占位符是写进请求体的额外字段，
 // 对没有这条约束的上游属于无谓改写，且可能触发未知字段校验。
-func requiresDeepSeekChatReasoning(account *Account, body []byte) bool {
+func requiresDeepSeekChatReasoningForModel(account *Account, model string) bool {
 	if targetsDeepSeekAPIHost(account) {
 		return true
 	}
 	if !targetsOpenCodeZenUpstream(account) {
 		return false
 	}
-	return isDeepSeekCatalogModel(gjson.GetBytes(body, "model").String())
+	return isDeepSeekCatalogModel(model)
+}
+
+// requiresDeepSeekChatReasoning reports whether the Chat Completions request
+// body's model is served by an upstream with DeepSeek thinking-mode semantics.
+func requiresDeepSeekChatReasoning(account *Account, body []byte) bool {
+	return requiresDeepSeekChatReasoningForModel(account, gjson.GetBytes(body, "model").String())
 }
 
 // ensureDeepSeekChatReasoningPlaceholders 给缺 reasoning_content 的 assistant

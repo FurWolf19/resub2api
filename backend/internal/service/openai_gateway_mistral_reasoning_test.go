@@ -209,3 +209,40 @@ func TestForwardAnthropicMessages_MistralChatFallbackStripsReasoningFields(t *te
 	require.Equal(t, "toolu_1", gjson.GetBytes(upstream.lastBody, "messages.1.tool_calls.0.id").String())
 	require.Equal(t, `{"city":"SF"}`, gjson.GetBytes(upstream.lastBody, "messages.1.tool_calls.0.function.arguments").String())
 }
+
+// /v1/messages 的 Chat fallback 非流式路径必须与流式一致：reasoning-only
+// 只产出 thinking 块，不能再把推理复制成可见 text 块。
+func TestForwardAnthropicMessages_MistralReasoningOnlyHasNoVisibleText(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{
+		"model":"mistral-large-latest",
+		"max_tokens":128,
+		"messages":[{"role":"user","content":"hi"}]
+	}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}, "x-request-id": []string{"rid_mistral_messages_reasoning_only"}},
+		Body: io.NopCloser(strings.NewReader(
+			`{"id":"chatcmpl_mistral_reasoning_only","object":"chat.completion","model":"mistral-large-latest","choices":[{"index":0,"message":{"role":"assistant","content":[{"type":"thinking","thinking":[{"type":"text","text":"SECRET"}],"closed":true}]},"finish_reason":"stop"}],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}`,
+		)),
+	}}
+	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream}
+
+	result, err := svc.forwardAnthropicViaRawChatCompletions(
+		context.Background(), c, mistralChatReasoningAccount("https://api.mistral.ai"), body, "",
+	)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	response := rec.Body.String()
+	require.Equal(t, int64(1), gjson.Get(response, "content.#").Int())
+	require.Equal(t, "thinking", gjson.Get(response, "content.0.type").String())
+	require.Equal(t, "SECRET", gjson.Get(response, "content.0.thinking").String())
+	require.False(t, gjson.Get(response, `content.#(type=="text")`).Exists(), "reasoning must not become visible text: %s", response)
+	require.NotContains(t, response, `"text":"SECRET"`)
+}

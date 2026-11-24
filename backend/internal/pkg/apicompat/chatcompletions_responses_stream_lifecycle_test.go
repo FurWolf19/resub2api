@@ -83,6 +83,75 @@ func TestStream_ReasoningOnlyDoesNotSynthesizeVisibleText(t *testing.T) {
 	require.True(t, sawReasoningDelta, "reasoning-only stream must keep reasoning deltas")
 }
 
+func TestStream_CompletedOutputReusesStreamedItemIDs(t *testing.T) {
+	t.Run("reasoning and message", func(t *testing.T) {
+		events := collectStreamEvents(t, []string{
+			`{"choices":[{"index":0,"delta":{"reasoning_content":"plan"}}]}`,
+			`{"choices":[{"index":0,"delta":{"content":"answer"}}]}`,
+			`{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
+		})
+
+		added := map[string]string{}
+		var completed *ResponsesResponse
+		for _, e := range events {
+			switch e.Type {
+			case "response.output_item.added":
+				require.NotNil(t, e.Item)
+				added[e.Item.Type] = e.Item.ID
+			case "response.completed":
+				require.NotNil(t, e.Response)
+				completed = e.Response
+			}
+		}
+		require.NotNil(t, completed)
+		require.Len(t, completed.Output, 2)
+		require.Equal(t, "reasoning", completed.Output[0].Type)
+		require.Equal(t, added["reasoning"], completed.Output[0].ID, "completed reasoning item must reuse the streamed output_item.added id")
+		require.NotEmpty(t, completed.Output[0].ID)
+		require.Equal(t, "message", completed.Output[1].Type)
+		require.Equal(t, added["message"], completed.Output[1].ID)
+	})
+
+	t.Run("reasoning only", func(t *testing.T) {
+		events := collectStreamEvents(t, []string{
+			`{"choices":[{"index":0,"delta":{"reasoning_content":"plan"}}]}`,
+			`{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
+		})
+
+		var addedID string
+		var completed *ResponsesResponse
+		for _, e := range events {
+			switch e.Type {
+			case "response.output_item.added":
+				if e.Item != nil && e.Item.Type == "reasoning" {
+					addedID = e.Item.ID
+				}
+			case "response.completed":
+				completed = e.Response
+			}
+		}
+		require.NotNil(t, completed)
+		require.Len(t, completed.Output, 1)
+		require.Equal(t, "reasoning", completed.Output[0].Type)
+		require.Equal(t, addedID, completed.Output[0].ID)
+	})
+
+	t.Run("no reasoning has no reasoning output", func(t *testing.T) {
+		events := collectStreamEvents(t, []string{
+			`{"choices":[{"index":0,"delta":{"content":"answer"}}]}`,
+			`{"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
+		})
+
+		for _, e := range events {
+			if e.Type == "response.completed" {
+				require.NotNil(t, e.Response)
+				require.Len(t, e.Response.Output, 1)
+				require.Equal(t, "message", e.Response.Output[0].Type)
+			}
+		}
+	})
+}
+
 func TestStream_WhitespaceReasoningKeepsEmptyMessage(t *testing.T) {
 	events := collectStreamEvents(t, []string{
 		`{"choices":[{"index":0,"delta":{"reasoning_content":"   "}}]}`,

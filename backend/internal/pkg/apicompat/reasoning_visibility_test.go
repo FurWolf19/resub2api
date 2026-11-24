@@ -515,7 +515,6 @@ func TestResponsesToChat_StripsLegacyThinkingPrefix(t *testing.T) {
 func TestThinkingStrip_DoesNotTouchNonWrapperText(t *testing.T) {
 	assistantTexts := []string{
 		"prefix <thinking>KEEP</thinking>\nVISIBLE",
-		"<thinking>UNCLOSED",
 		"<thinking>x</thinking> is a tag",
 		"<Thinking>x</Thinking>\nVISIBLE",
 	}
@@ -534,6 +533,38 @@ func TestThinkingStrip_DoesNotTouchNonWrapperText(t *testing.T) {
 		assert.JSONEq(t, strconvQuote("<thinking>KEEP</thinking>"), string(items[0].Content))
 		assert.Equal(t, text, messagePartText(t, items[1]))
 	}
+}
+
+func TestChatToResponses_LeadingCompleteThinkingThenUnclosedDoesNotLeak(t *testing.T) {
+	const content = "<thinking>SECRET</thinking>\n<thinking>OOPS"
+	base := func() *ChatCompletionsRequest {
+		return &ChatCompletionsRequest{
+			Model: "deepseek-v4-flash",
+			Messages: []ChatMessage{
+				{Role: "user", Content: json.RawMessage(`"Hi"`)},
+				{Role: "assistant", Content: json.RawMessage(strconvQuote(content))},
+			},
+		}
+	}
+
+	items, raw := convertChatRequestForReasoningTest(t, base(), ChatCompletionsReasoningReplayDrop)
+	require.Len(t, items, 1, "an unterminated leading thinking block must not produce a visible assistant turn")
+	assert.NotContains(t, raw, "SECRET")
+	assert.NotContains(t, raw, "OOPS")
+	assert.NotContains(t, raw, "<thinking>")
+
+	withTool := base()
+	withTool.Messages[1].ToolCalls = []ChatToolCall{{
+		ID: "call_1", Type: "function",
+		Function: ChatFunctionCall{Name: "lookup", Arguments: `{}`},
+	}}
+	items, raw = convertChatRequestForReasoningTest(t, withTool, ChatCompletionsReasoningReplayText)
+	require.Len(t, items, 3)
+	assert.Equal(t, "reasoning", items[1].Type)
+	assert.Equal(t, "SECRET", reasoningItemText(t, items[1]))
+	assert.Equal(t, "function_call", items[2].Type)
+	assert.NotContains(t, raw, "OOPS")
+	assert.NotContains(t, raw, "<thinking>")
 }
 
 func strconvQuote(s string) string {

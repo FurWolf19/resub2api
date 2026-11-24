@@ -33,13 +33,20 @@ func splitLeadingThinkingBlocks(text string) (visible, reasoning string) {
 		bodyStart := cursor + len(thinkingOpenTag)
 		rel := strings.Index(text[bodyStart:], thinkingCloseTag)
 		if rel < 0 {
-			// A leading wrapper is malformed: keep the original text instead of
-			// partially stripping a prefix that would leave broken tags behind.
-			return text, ""
+			// A leading wrapper without a closing tag is untrusted reasoning.
+			// Returning the original text would leak it (and any complete blocks
+			// already stripped) as visible content, so drop the unterminated
+			// block and everything after it.
+			if len(blocks) == 0 {
+				return "", ""
+			}
+			return "", strings.Join(blocks, "\n")
 		}
 		bodyEnd := bodyStart + rel
 		after := bodyEnd + len(thinkingCloseTag)
 		if !validThinkingBlockEnd(text, after) {
+			// The closing tag belongs to ordinary prose, not a legacy wrapper.
+			// Keep the text as-is instead of partially stripping it.
 			return text, ""
 		}
 		blocks = append(blocks, text[bodyStart:bodyEnd])

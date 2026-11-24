@@ -403,7 +403,7 @@ func TestChatCompletionsResponseToAnthropic_ToolUse(t *testing.T) {
 	require.Equal(t, "tool_use", AnthropicStopReasonString(out.StopReason))
 }
 
-func TestChatCompletionsResponseToAnthropic_ReasoningOnlyFallback(t *testing.T) {
+func TestChatCompletionsResponseToAnthropic_ReasoningOnlyHasNoTextFallback(t *testing.T) {
 	resp := &ChatCompletionsResponse{
 		ID:    "chatcmpl-3",
 		Model: "deepseek-v4-pro",
@@ -418,12 +418,35 @@ func TestChatCompletionsResponseToAnthropic_ReasoningOnlyFallback(t *testing.T) 
 	}
 
 	out := ChatCompletionsResponseToAnthropic(resp, "claude-sonnet-4-20250514")
-	// thinking block + text block (fallback uses reasoning as visible text)
-	require.Len(t, out.Content, 2)
+	// Reasoning-only turns carry a thinking block only; copying reasoning into
+	// visible text would diverge from the streaming bridge.
+	require.Len(t, out.Content, 1)
 	require.Equal(t, "thinking", out.Content[0].Type)
 	require.Equal(t, "I should think about this", out.Content[0].Thinking)
-	require.Equal(t, "text", out.Content[1].Type)
-	require.Equal(t, "I should think about this", out.Content[1].Text)
+	require.Equal(t, "end_turn", AnthropicStopReasonString(out.StopReason))
+}
+
+func TestChatCompletionsResponseToAnthropic_MistralThinkingOnlyHasNoTextBlock(t *testing.T) {
+	var resp ChatCompletionsResponse
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"id":"chatcmpl-mistral-thinking-only",
+		"model":"mistral-large-latest",
+		"choices":[{"index":0,"message":{"role":"assistant","content":[
+			{"type":"thinking","thinking":[{"type":"text","text":"SECRET"}],"closed":true}
+		]},"finish_reason":"stop"}]
+	}`), &resp))
+
+	msg := resp.Choices[0].Message
+	require.JSONEq(t, `""`, string(msg.Content))
+	require.Equal(t, "SECRET", msg.ReasoningContent)
+
+	out := ChatCompletionsResponseToAnthropic(&resp, "claude-sonnet-4-20250514")
+	require.Len(t, out.Content, 1)
+	require.Equal(t, "thinking", out.Content[0].Type)
+	require.Equal(t, "SECRET", out.Content[0].Thinking)
+	for _, block := range out.Content {
+		require.NotEqual(t, "text", block.Type, "reasoning must not be surfaced as visible text")
+	}
 }
 
 func TestChatCompletionsResponseToAnthropic_FinishReasonLength(t *testing.T) {

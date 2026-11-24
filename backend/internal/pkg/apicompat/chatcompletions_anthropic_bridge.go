@@ -466,12 +466,10 @@ func chatMessageToAnthropicBlocks(message ChatMessage) []AnthropicContentBlock {
 	}
 
 	text := chatMessageContentText(message.Content)
-	// DeepSeek reasoning-only fallback: when there is no text and no tool calls,
-	// surface the reasoning content as visible text so the turn isn't empty.
-	if text == "" && strings.TrimSpace(reasoning) != "" && len(message.ToolCalls) == 0 {
-		text = reasoning
-	}
-	if text != "" || len(message.ToolCalls) == 0 {
+	// Reasoning stays on the thinking channel. A reasoning-only turn must not
+	// be copied into visible text: the streaming bridge emits thinking deltas
+	// only, and non-streaming clients must see the same content shape.
+	if text != "" {
 		blocks = append(blocks, AnthropicContentBlock{Type: "text", Text: text})
 	}
 

@@ -26,6 +26,24 @@ func TestSplitLeadingThinkingBlocks(t *testing.T) {
 			wantReasoning: "a\nb",
 		},
 		{
+			name:          "complete block then unclosed block drops unterminated tail",
+			input:         "<thinking>SECRET</thinking>\n<thinking>oops",
+			wantVisible:   "",
+			wantReasoning: "SECRET",
+		},
+		{
+			name:          "complete and unclosed blocks without separator",
+			input:         "<thinking>SECRET</thinking><thinking>oops",
+			wantVisible:   "",
+			wantReasoning: "SECRET",
+		},
+		{
+			name:          "complete blocks without separator and trailing text",
+			input:         "<thinking>SECRET</thinking><thinking>oops</thinking>trailing",
+			wantVisible:   "trailing",
+			wantReasoning: "SECRET\noops",
+		},
+		{
 			name:          "only block",
 			input:         "<thinking>a</thinking>",
 			wantVisible:   "",
@@ -40,7 +58,13 @@ func TestSplitLeadingThinkingBlocks(t *testing.T) {
 		{
 			name:          "unclosed",
 			input:         "<thinking>a",
-			wantVisible:   "<thinking>a",
+			wantVisible:   "",
+			wantReasoning: "",
+		},
+		{
+			name:          "leading whitespace then unclosed",
+			input:         " \n<thinking>a",
+			wantVisible:   "",
 			wantReasoning: "",
 		},
 		{

@@ -337,34 +337,11 @@ func parseAssistantContent(raw json.RawMessage) (text string, reasoning string, 
 		return s, "", nil
 	}
 
-	var parts []map[string]any
-	if err := json.Unmarshal(raw, &parts); err != nil {
-		// Keep compatibility with prior behavior: unsupported assistant content
-		// formats are ignored instead of failing the whole request conversion.
-		return "", "", nil
-	}
-
-	var textBuilder, reasoningBuilder strings.Builder
-	for _, p := range parts {
-		typ, _ := p["type"].(string)
-		text, _ := p["text"].(string)
-		thinking, _ := p["thinking"].(string)
-
-		switch typ {
-		case "thinking", "reasoning":
-			if thinking != "" {
-				reasoningBuilder.WriteString(thinking)
-			} else if text != "" {
-				reasoningBuilder.WriteString(text)
-			}
-		default:
-			if text != "" {
-				textBuilder.WriteString(text)
-			}
-		}
-	}
-
-	return textBuilder.String(), reasoningBuilder.String(), nil
+	// Array content is shared with the response normalizer: it accepts plain
+	// thinking text, Mistral-style nested thinking[].text, and reasoning/text
+	// variants while keeping reasoning out of visible text.
+	text, reasoning, _, _ = chatContentArrayPartsDetailed(raw, "\n\n")
+	return text, reasoning, nil
 }
 
 // chatToolToResponses converts a tool result message (role=tool) into a

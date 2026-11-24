@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -215,4 +216,76 @@ func TestForwardResponses_MistralThinkingArrayBufferedStaysOutOfVisibleText(t *t
 	require.Equal(t, "function_call", gjson.Get(response, "output.2.type").String())
 	require.Equal(t, `{"key":"alpha"}`, gjson.Get(response, "output.2.arguments").String())
 	require.NotContains(t, response, `"content":"SECRET"`)
+}
+
+func TestChatCompletionsToResponsesForAccount_OpenCodeZenDeepSeekReplaysReasoning(t *testing.T) {
+	req := &apicompat.ChatCompletionsRequest{
+		Model: "deepseek-v4.1-flash",
+		Messages: []apicompat.ChatMessage{
+			{Role: "user", Content: []byte(`"hi"`)},
+			{Role: "assistant", Content: []byte(`[
+				{"type":"thinking","thinking":[{"type":"text","text":"SECRET"}],"closed":true},
+				{"type":"text","text":"VISIBLE"}
+			]`)},
+		},
+	}
+
+	tests := []struct {
+		name       string
+		account    *Account
+		model      string
+		wantReason bool
+	}{
+		{
+			name:       "opencode go deepseek uses text replay",
+			account:    &Account{Platform: PlatformOpenCodeGo, Type: AccountTypeAPIKey, Credentials: map[string]any{"api_key": "sk-test", "base_url": DefaultOpenCodeGoBaseURL}},
+			model:      "deepseek-v4.1-flash",
+			wantReason: true,
+		},
+		{
+			name:       "openai account pointed at opencode zen deepseek uses text replay",
+			account:    &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"api_key": "sk-test", "base_url": DefaultOpenCodeZenBaseURL}},
+			model:      "deepseek-v4.1-flash",
+			wantReason: true,
+		},
+		{
+			name:       "opencode go prefixed deepseek uses text replay",
+			account:    &Account{Platform: PlatformOpenCodeGo, Type: AccountTypeAPIKey, Credentials: map[string]any{"api_key": "sk-test", "base_url": DefaultOpenCodeGoBaseURL}},
+			model:      "opencode-go/DeepSeek-V4-Pro",
+			wantReason: true,
+		},
+		{
+			name:       "opencode go non deepseek drops reasoning",
+			account:    &Account{Platform: PlatformOpenCodeGo, Type: AccountTypeAPIKey, Credentials: map[string]any{"api_key": "sk-test", "base_url": DefaultOpenCodeGoBaseURL}},
+			model:      "gpt-5.6-luna",
+			wantReason: false,
+		},
+		{
+			name:       "third party deepseek name drops reasoning",
+			account:    &Account{Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Credentials: map[string]any{"api_key": "sk-test", "base_url": "https://example.com"}},
+			model:      "deepseek-v4.1-flash",
+			wantReason: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			testReq := *req
+			testReq.Model = tt.model
+			out, err := chatCompletionsToResponsesForAccount(nil, tt.account, &testReq)
+			require.NoError(t, err)
+
+			input := string(out.Input)
+			if tt.wantReason {
+				require.Equal(t, "reasoning", gjson.Get(input, "1.type").String())
+				require.Equal(t, "reasoning_text", gjson.Get(input, "1.content.0.type").String())
+				require.Equal(t, "SECRET", gjson.Get(input, "1.content.0.text").String())
+				require.Equal(t, "VISIBLE", gjson.Get(input, "2.content.0.text").String())
+			} else {
+				require.False(t, gjson.Get(input, `#(type=="reasoning")`).Exists())
+				require.NotContains(t, input, "SECRET")
+				require.Equal(t, "VISIBLE", gjson.Get(input, `#(role=="assistant").content.0.text`).String())
+			}
+		})
+	}
 }

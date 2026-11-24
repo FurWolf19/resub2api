@@ -902,7 +902,7 @@ func TestChatCompletionsToResponses_AssistantArrayContentPreserved(t *testing.T)
 	require.NoError(t, json.Unmarshal(items[1].Content, &parts))
 	require.Len(t, parts, 1)
 	assert.Equal(t, "output_text", parts[0].Type)
-	assert.Equal(t, "AB", parts[0].Text)
+	assert.Equal(t, "A\n\nB", parts[0].Text)
 }
 
 func TestChatCompletionsToResponses_AssistantThinkingPartDropped(t *testing.T) {

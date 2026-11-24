@@ -89,6 +89,45 @@ func TestChatMessageContent_ArrayTextPart(t *testing.T) {
 	require.Equal(t, "VISIBLE", out.Output[0].Content[0].Text)
 }
 
+func TestChatMessageContent_MultipleTextPartsJoinWithBlankLine(t *testing.T) {
+	var resp ChatCompletionsResponse
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"id":"chatcmpl_array_text_parts",
+		"choices":[{"index":0,"message":{"role":"assistant","content":[
+			{"type":"thinking","thinking":[{"type":"text","text":"SECRET"}],"closed":true},
+			{"type":"text","text":"first"},
+			{"type":"text","text":"second"}
+		]},"finish_reason":"stop"}]
+	}`), &resp))
+
+	msg := resp.Choices[0].Message
+	require.JSONEq(t, `"first\n\nsecond"`, string(msg.Content))
+	require.Equal(t, "SECRET", msg.ReasoningContent)
+
+	out := ChatCompletionsResponseToResponses(&resp, "mistral-model", nil, nil, false, nil)
+	require.Len(t, out.Output, 2)
+	require.Equal(t, "reasoning", out.Output[0].Type)
+	require.Equal(t, "first\n\nsecond", out.Output[1].Content[0].Text)
+}
+
+func TestChatToResponses_RequestMultipleTextPartsJoinWithBlankLine(t *testing.T) {
+	req := &ChatCompletionsRequest{
+		Model: "deepseek-v4-flash",
+		Messages: []ChatMessage{
+			{Role: "user", Content: json.RawMessage(`"hi"`)},
+			{Role: "assistant", Content: json.RawMessage(`[
+				{"type":"text","text":"first"},
+				{"type":"text","text":"second"}
+			]`)},
+		},
+	}
+
+	items, _ := convertChatRequestForReasoningTest(t, req, ChatCompletionsReasoningReplayDrop)
+
+	require.Len(t, items, 2)
+	assert.Equal(t, "first\n\nsecond", messagePartText(t, items[1]))
+}
+
 func TestChatMessageContent_MistralThinkingArray(t *testing.T) {
 	var resp ChatCompletionsResponse
 	require.NoError(t, json.Unmarshal([]byte(`{
@@ -232,7 +271,7 @@ func TestChatDeltaContent_UnknownArrayPartDropped(t *testing.T) {
 	require.NotContains(t, string(wire), "HIDDEN")
 }
 
-func TestChatToResponses_MistralThinkingArrayRequestStaysOutOfVisibleText(t *testing.T) {
+func TestChatToResponses_MistralNestedThinkingRequest(t *testing.T) {
 	var req ChatCompletionsRequest
 	require.NoError(t, json.Unmarshal([]byte(`{
 		"model":"gpt-4o",
@@ -242,16 +281,56 @@ func TestChatToResponses_MistralThinkingArrayRequestStaysOutOfVisibleText(t *tes
 		]
 	}`), &req))
 
-	for _, replay := range []ChatCompletionsReasoningReplay{
-		ChatCompletionsReasoningReplayDrop,
-		ChatCompletionsReasoningReplayText,
-	} {
-		items, raw := convertChatRequestForReasoningTest(t, &req, replay)
+	t.Run("drop mode discards reasoning", func(t *testing.T) {
+		items, raw := convertChatRequestForReasoningTest(t, &req, ChatCompletionsReasoningReplayDrop)
 		require.Len(t, items, 2)
 		assert.Equal(t, "VISIBLE", messagePartText(t, items[1]))
 		assert.NotContains(t, raw, "SECRET")
-		assert.NotContains(t, raw, `"type":"thinking"`)
-	}
+		assert.NotContains(t, raw, `"type":"reasoning"`)
+	})
+
+	t.Run("deepseek text mode replays nested reasoning", func(t *testing.T) {
+		items, raw := convertChatRequestForReasoningTest(t, &req, ChatCompletionsReasoningReplayText)
+		require.Len(t, items, 3)
+		assert.Equal(t, "reasoning", items[1].Type)
+		assert.Equal(t, "SECRET", reasoningItemText(t, items[1]))
+		assert.Equal(t, "VISIBLE", messagePartText(t, items[2]))
+		assert.NotContains(t, raw, `<thinking>`)
+	})
+
+	t.Run("reasoning type with nested text replays", func(t *testing.T) {
+		reasoningReq := &ChatCompletionsRequest{
+			Model: "deepseek-v4-flash",
+			Messages: []ChatMessage{
+				{Role: "user", Content: json.RawMessage(`"hi"`)},
+				{Role: "assistant", Content: json.RawMessage(`[
+					{"type":"reasoning","thinking":[{"type":"text","text":"NESTED"}],"closed":true},
+					{"type":"text","text":"VISIBLE"}
+				]`)},
+			},
+		}
+		items, _ := convertChatRequestForReasoningTest(t, reasoningReq, ChatCompletionsReasoningReplayText)
+		require.Len(t, items, 3)
+		assert.Equal(t, "NESTED", reasoningItemText(t, items[1]))
+		assert.Equal(t, "VISIBLE", messagePartText(t, items[2]))
+	})
+
+	t.Run("reasoning field with nested text replays", func(t *testing.T) {
+		reasoningReq := &ChatCompletionsRequest{
+			Model: "deepseek-v4-flash",
+			Messages: []ChatMessage{
+				{Role: "user", Content: json.RawMessage(`"hi"`)},
+				{Role: "assistant", Content: json.RawMessage(`[
+					{"type":"reasoning","reasoning":[{"type":"text","text":"NESTED2"}],"closed":true},
+					{"type":"text","text":"VISIBLE"}
+				]`)},
+			},
+		}
+		items, _ := convertChatRequestForReasoningTest(t, reasoningReq, ChatCompletionsReasoningReplayText)
+		require.Len(t, items, 3)
+		assert.Equal(t, "NESTED2", reasoningItemText(t, items[1]))
+		assert.Equal(t, "VISIBLE", messagePartText(t, items[2]))
+	})
 }
 
 func TestChatDeltaContent_StringStillParses(t *testing.T) {
@@ -263,6 +342,27 @@ func TestChatDeltaContent_StringStillParses(t *testing.T) {
 	require.Equal(t, "VISIBLE", *delta.Content)
 	require.NotNil(t, delta.ReasoningContent)
 	require.Equal(t, "SECRET", *delta.ReasoningContent)
+}
+
+func TestChatDeltaContent_MultipleTextPartsJoinWithoutSeparator(t *testing.T) {
+	var chunk ChatCompletionsChunk
+	require.NoError(t, json.Unmarshal([]byte(`{"choices":[{"index":0,"delta":{"content":[
+		{"type":"text","text":"first"},
+		{"type":"text","text":"second"}
+	]}}]}`), &chunk))
+
+	delta := chunk.Choices[0].Delta
+	require.NotNil(t, delta.Content)
+	require.Equal(t, "firstsecond", *delta.Content, "streaming parts are one increment; no paragraph break may be inserted")
+
+	events := ChatCompletionsChunkToResponsesEvents(&chunk, NewChatCompletionsToResponsesStreamState("deepseek-v4-pro"))
+	var deltas []string
+	for _, event := range events {
+		if event.Type == "response.output_text.delta" {
+			deltas = append(deltas, event.Delta)
+		}
+	}
+	require.Equal(t, []string{"firstsecond"}, deltas)
 }
 
 func TestChatDeltaContent_ThinkingAndTextInSameChunk(t *testing.T) {
