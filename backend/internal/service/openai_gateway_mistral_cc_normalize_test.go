@@ -23,7 +23,10 @@ func TestIsMistralChatUpstream(t *testing.T) {
 
 	require.True(t, isMistralChatUpstream("https://api.mistral.ai/v1/chat/completions"))
 	require.True(t, isMistralChatUpstream("https://API.MISTRAL.AI:443/v1/chat/completions"))
+	require.True(t, isMistralChatUpstream("https://api.mistral.ai./v1/chat/completions"))
+	require.True(t, isMistralChatUpstream("https://API.MISTRAL.AI.:443/v1/chat/completions"))
 	require.False(t, isMistralChatUpstream("https://api.mistral.ai.evil.example/v1/chat/completions"))
+	require.False(t, isMistralChatUpstream("https://evil.api.mistral.ai/v1/chat/completions"))
 	require.False(t, isMistralChatUpstream("https://mistral.ai/v1/chat/completions"))
 	require.False(t, isMistralChatUpstream("https://api.deepseek.com/v1/chat/completions"))
 	require.False(t, isMistralChatUpstream("not a url"))

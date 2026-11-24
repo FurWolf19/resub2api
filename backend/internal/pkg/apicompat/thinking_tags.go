@@ -15,8 +15,10 @@ const (
 //
 // It only strips complete, lowercase blocks at the very beginning (leading
 // whitespace allowed) whose closing tag is followed by a newline, the end of
-// the string, or a non-whitespace character. Anything else is returned
-// unchanged so normal assistant text is not rewritten.
+// the string, or a non-whitespace character. Text that is not a legacy wrapper
+// is returned unchanged so normal assistant text is not rewritten. A leading
+// wrapper without a closing tag is untrusted reasoning: the block and
+// everything after it are dropped so it cannot leak as visible content.
 func splitLeadingThinkingBlocks(text string) (visible, reasoning string) {
 	if text == "" {
 		return "", ""

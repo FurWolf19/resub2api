@@ -46,9 +46,10 @@ func normalizeChatResponseMessageContent(m *ChatMessage) {
 // NormalizeChatContentParts splits a Chat Completions response content value
 // into visible text and reasoning text. Strings pass through unchanged. Arrays
 // follow the same part rules as ChatChoice.UnmarshalJSON: thinking/reasoning
-// parts become reasoning, text/output_text/input_text parts become visible
-// content, and unknown parts are dropped. isArray reports whether raw was an
-// array so callers can tell whether the value needs rewriting at all.
+// parts become reasoning, text/output_text/input_text and unknown parts with a
+// string text field become visible content, and other unknown parts are
+// dropped. isArray reports whether raw was an array so callers can tell
+// whether the value needs rewriting at all.
 //
 // This is for wire-level passthrough paths that cannot decode into ChatMessage;
 // protocol conversion keeps using the decoders above.
@@ -138,11 +139,12 @@ func chatContentArrayParts(raw json.RawMessage) (visible, reasoning string) {
 }
 
 // chatContentArrayPartsDetailed splits array content into visible text and
-// reasoning text. Unknown part types are ignored: they are neither promoted to
-// visible content nor turned into reasoning. textSeparator joins multiple
-// visible parts: non-streaming messages use "\n\n" (matching
-// chatMessageContentText), streaming deltas use "" to avoid injecting paragraph
-// breaks into an increment.
+// reasoning text. Unknown part types with a string text field are kept as
+// visible content (the historical request-side behavior); unknown parts without
+// text are ignored. Thinking/reasoning parts never become visible content.
+// textSeparator joins multiple visible parts: non-streaming messages use "\n\n"
+// (matching chatMessageContentText), streaming deltas use "" to avoid injecting
+// paragraph breaks into an increment.
 func chatContentArrayPartsDetailed(raw json.RawMessage, textSeparator string) (visible, reasoning string, hasVisible, hasReasoning bool) {
 	var parts []json.RawMessage
 	if err := json.Unmarshal(raw, &parts); err != nil {
@@ -163,6 +165,18 @@ func chatContentArrayPartsDetailed(raw json.RawMessage, textSeparator string) (v
 			hasReasoning = true
 			reasoningBuilder.WriteString(text)
 		case "text", "output_text", "input_text", "":
+			text := rawString(part["text"])
+			if text == "" {
+				continue
+			}
+			if hasVisible {
+				visibleBuilder.WriteString(textSeparator)
+			}
+			hasVisible = true
+			visibleBuilder.WriteString(text)
+		default:
+			// Unknown typed parts keep a string text payload as visible content;
+			// parts without text stay dropped and never become reasoning.
 			text := rawString(part["text"])
 			if text == "" {
 				continue

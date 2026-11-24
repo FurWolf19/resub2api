@@ -195,20 +195,54 @@ func TestChatMessageContent_MistralThinkingWithToolCalls(t *testing.T) {
 	require.Equal(t, `{"key":"alpha"}`, out.Output[2].Arguments)
 }
 
-func TestChatMessageContent_UnknownArrayPartDropped(t *testing.T) {
-	var resp ChatCompletionsResponse
-	require.NoError(t, json.Unmarshal([]byte(`{
-		"id":"chatcmpl_unknown_part",
-		"choices":[{"index":0,"message":{"role":"assistant","content":[{"type":"analysis","text":"HIDDEN"},{"type":"text","text":"VISIBLE"}]},"finish_reason":"stop"}]
-	}`), &resp))
+func TestChatMessageContent_UnknownArrayPartPolicy(t *testing.T) {
+	t.Run("unknown part with text is visible", func(t *testing.T) {
+		var resp ChatCompletionsResponse
+		require.NoError(t, json.Unmarshal([]byte(`{
+			"id":"chatcmpl_unknown_text_part",
+			"choices":[{"index":0,"message":{"role":"assistant","content":[{"type":"analysis","text":"ANALYSIS"},{"type":"text","text":"VISIBLE"}]},"finish_reason":"stop"}]
+		}`), &resp))
 
-	out := ChatCompletionsResponseToResponses(&resp, "mistral-model", nil, nil, false, nil)
-	require.Len(t, out.Output, 1)
-	require.Equal(t, "VISIBLE", out.Output[0].Content[0].Text)
+		out := ChatCompletionsResponseToResponses(&resp, "mistral-model", nil, nil, false, nil)
+		require.Len(t, out.Output, 1)
+		require.Equal(t, "ANALYSIS\n\nVISIBLE", out.Output[0].Content[0].Text)
+	})
 
-	serialized, err := json.Marshal(out)
-	require.NoError(t, err)
-	require.NotContains(t, string(serialized), "HIDDEN")
+	t.Run("unknown part without text is dropped", func(t *testing.T) {
+		var resp ChatCompletionsResponse
+		require.NoError(t, json.Unmarshal([]byte(`{
+			"id":"chatcmpl_unknown_meta_part",
+			"choices":[{"index":0,"message":{"role":"assistant","content":[{"type":"analysis","data":"HIDDEN"},{"type":"text","text":"VISIBLE"}]},"finish_reason":"stop"}]
+		}`), &resp))
+
+		out := ChatCompletionsResponseToResponses(&resp, "mistral-model", nil, nil, false, nil)
+		require.Len(t, out.Output, 1)
+		require.Equal(t, "VISIBLE", out.Output[0].Content[0].Text)
+
+		serialized, err := json.Marshal(out)
+		require.NoError(t, err)
+		require.NotContains(t, string(serialized), "HIDDEN")
+	})
+}
+
+func TestChatToResponses_RequestUnknownTextPartPreserved(t *testing.T) {
+	req := &ChatCompletionsRequest{
+		Model: "gpt-4o",
+		Messages: []ChatMessage{
+			{Role: "user", Content: json.RawMessage(`"hi"`)},
+			{Role: "assistant", Content: json.RawMessage(`[
+				{"type":"markdown","text":"# Title"},
+				{"type":"attachment","data":"HIDDEN"}
+			]`)},
+		},
+	}
+
+	items, raw := convertChatRequestForReasoningTest(t, req, ChatCompletionsReasoningReplayDrop)
+
+	require.Len(t, items, 2)
+	assert.Equal(t, "# Title", messagePartText(t, items[1]))
+	assert.NotContains(t, raw, "HIDDEN")
+	assert.NotContains(t, raw, `"type":"reasoning"`)
 }
 
 func TestChatDeltaContent_ThinkingArraySplit(t *testing.T) {
@@ -257,18 +291,30 @@ func TestChatDeltaContent_ThinkingArrayKeepsChatReasoningContent(t *testing.T) {
 	require.NotContains(t, string(wire), `"type":"thinking"`)
 }
 
-func TestChatDeltaContent_UnknownArrayPartDropped(t *testing.T) {
-	var chunk ChatCompletionsChunk
-	require.NoError(t, json.Unmarshal([]byte(`{"choices":[{"index":0,"delta":{"content":[{"type":"analysis","text":"HIDDEN"},{"type":"text","text":"VISIBLE"}]}}]}`), &chunk))
+func TestChatDeltaContent_UnknownArrayPartPolicy(t *testing.T) {
+	t.Run("unknown part with text is visible", func(t *testing.T) {
+		var chunk ChatCompletionsChunk
+		require.NoError(t, json.Unmarshal([]byte(`{"choices":[{"index":0,"delta":{"content":[{"type":"analysis","text":"ANALYSIS"},{"type":"text","text":"VISIBLE"}]}}]}`), &chunk))
 
-	delta := chunk.Choices[0].Delta
-	require.NotNil(t, delta.Content)
-	require.Equal(t, "VISIBLE", *delta.Content)
-	require.Nil(t, delta.ReasoningContent)
+		delta := chunk.Choices[0].Delta
+		require.NotNil(t, delta.Content)
+		require.Equal(t, "ANALYSISVISIBLE", *delta.Content)
+		require.Nil(t, delta.ReasoningContent)
+	})
 
-	wire, err := json.Marshal(delta)
-	require.NoError(t, err)
-	require.NotContains(t, string(wire), "HIDDEN")
+	t.Run("unknown part without text is dropped", func(t *testing.T) {
+		var chunk ChatCompletionsChunk
+		require.NoError(t, json.Unmarshal([]byte(`{"choices":[{"index":0,"delta":{"content":[{"type":"analysis","data":"HIDDEN"},{"type":"text","text":"VISIBLE"}]}}]}`), &chunk))
+
+		delta := chunk.Choices[0].Delta
+		require.NotNil(t, delta.Content)
+		require.Equal(t, "VISIBLE", *delta.Content)
+		require.Nil(t, delta.ReasoningContent)
+
+		wire, err := json.Marshal(delta)
+		require.NoError(t, err)
+		require.NotContains(t, string(wire), "HIDDEN")
+	})
 }
 
 func TestChatToResponses_MistralNestedThinkingRequest(t *testing.T) {

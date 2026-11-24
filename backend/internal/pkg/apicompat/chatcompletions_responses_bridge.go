@@ -1522,17 +1522,11 @@ func chatMessageContentText(raw json.RawMessage) string {
 	if err := json.Unmarshal(raw, &text); err == nil {
 		return text
 	}
-	var parts []ChatContentPart
-	if err := json.Unmarshal(raw, &parts); err == nil {
-		var texts []string
-		for _, part := range parts {
-			if part.Type == "text" && part.Text != "" {
-				texts = append(texts, part.Text)
-			}
-		}
-		return strings.Join(texts, "\n\n")
-	}
-	return ""
+	// Share the array part rules with chatContentArrayPartsDetailed: known text
+	// parts and unknown parts carrying a string text are visible; thinking and
+	// reasoning parts are never promoted to visible text here.
+	visible, _, _, _ := chatContentArrayPartsDetailed(raw, "\n\n")
+	return visible
 }
 
 // ChatUsageToResponsesUsage converts Chat Completions token usage to Responses

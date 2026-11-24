@@ -22,21 +22,24 @@ func chatUpstreamRejectsReasoningFields(targetURL string) bool {
 
 // isMistralChatUpstream 按 host 精确判定目标是否为 Mistral Chat Completions。
 // 请求侧剥离 reasoning 字段与响应侧归一化 content 数组共用同一判定。
+// 比较前去掉 FQDN 尾点并转小写，避免 "api.mistral.ai." 漏判。
 func isMistralChatUpstream(targetURL string) bool {
 	u, err := url.Parse(strings.TrimSpace(targetURL))
 	if err != nil {
 		return false
 	}
-	return strings.EqualFold(u.Hostname(), mistralChatRejectsReasoningFieldsHost)
+	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
+	return host == mistralChatRejectsReasoningFieldsHost
 }
 
-// stripChatReasoningFields 删除 assistant 消息里的 reasoning_content 与
-// reasoning 字段。
+// stripChatReasoningFields 删除 assistant 消息里的 reasoning_content、
+// reasoning、reasoning_details 与 thinking 字段。
 //
 // Responses→Chat / Anthropic→Chat 桥接会把历史 thinking 写成 assistant 的
-// reasoning_content；Mistral 的 Chat Completions 对未知字段返回 422
-// extra_forbidden，导致多轮与工具续轮失败。这里只处理顶层 messages 数组，
-// content、tool_calls 及其他字段保持不变。
+// reasoning_content；OpenRouter 等客户端回放时还可能带 reasoning_details 或
+// thinking。Mistral 的 Chat Completions 对未知字段返回 422 extra_forbidden，
+// 导致多轮与工具续轮失败。这里只处理顶层 messages 数组，content、tool_calls
+// 及其他字段保持不变。
 //
 // 非法 JSON、缺失或非数组的 messages、非对象消息一律原样返回，不报错也不
 // panic；只有无法编码已解析结构时才返回错误，调用方按 fail-open 处理。
@@ -66,11 +69,15 @@ func stripChatReasoningFields(body []byte) ([]byte, error) {
 		}
 		_, hasReasoningContent := message["reasoning_content"]
 		_, hasReasoning := message["reasoning"]
-		if !hasReasoningContent && !hasReasoning {
+		_, hasReasoningDetails := message["reasoning_details"]
+		_, hasThinking := message["thinking"]
+		if !hasReasoningContent && !hasReasoning && !hasReasoningDetails && !hasThinking {
 			continue
 		}
 		delete(message, "reasoning_content")
 		delete(message, "reasoning")
+		delete(message, "reasoning_details")
+		delete(message, "thinking")
 		updated, err := json.Marshal(message)
 		if err != nil {
 			return body, err

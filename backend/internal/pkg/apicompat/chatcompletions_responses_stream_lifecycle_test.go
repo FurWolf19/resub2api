@@ -112,6 +112,33 @@ func TestStream_CompletedOutputReusesStreamedItemIDs(t *testing.T) {
 		require.Equal(t, added["message"], completed.Output[1].ID)
 	})
 
+	t.Run("reasoning and tool call", func(t *testing.T) {
+		events := collectStreamEvents(t, []string{
+			`{"choices":[{"index":0,"delta":{"reasoning_content":"plan"}}]}`,
+			`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"exec","arguments":"{}"}}]}}]}`,
+			`{"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`,
+		})
+
+		added := map[string]string{}
+		var completed *ResponsesResponse
+		for _, e := range events {
+			switch e.Type {
+			case "response.output_item.added":
+				require.NotNil(t, e.Item)
+				added[e.Item.Type] = e.Item.ID
+			case "response.completed":
+				require.NotNil(t, e.Response)
+				completed = e.Response
+			}
+		}
+		require.NotNil(t, completed)
+		require.Len(t, completed.Output, 2)
+		require.Equal(t, "reasoning", completed.Output[0].Type)
+		require.Equal(t, added["reasoning"], completed.Output[0].ID, "completed reasoning item must reuse the streamed output_item.added id")
+		require.NotEmpty(t, completed.Output[0].ID)
+		require.Equal(t, "function_call", completed.Output[1].Type)
+	})
+
 	t.Run("reasoning only", func(t *testing.T) {
 		events := collectStreamEvents(t, []string{
 			`{"choices":[{"index":0,"delta":{"reasoning_content":"plan"}}]}`,

@@ -36,6 +36,16 @@ func TestNormalizeChatContentParts(t *testing.T) {
 		require.True(t, isArray)
 	})
 
+	t.Run("unknown part with text kept visible", func(t *testing.T) {
+		content, reasoning, isArray, err := NormalizeChatContentParts(json.RawMessage(
+			`[{"type":"markdown","text":"# Title"},{"type":"custom","data":"HIDDEN"},{"type":"text","text":"VISIBLE"}]`,
+		))
+		require.NoError(t, err)
+		require.Equal(t, "# Title\n\nVISIBLE", content)
+		require.Empty(t, reasoning)
+		require.True(t, isArray)
+	})
+
 	t.Run("empty array", func(t *testing.T) {
 		content, reasoning, isArray, err := NormalizeChatContentParts(json.RawMessage(`[]`))
 		require.NoError(t, err)

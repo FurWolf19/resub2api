@@ -510,6 +510,25 @@ func TestResponsesToChat_StripsLegacyThinkingPrefix(t *testing.T) {
 		require.JSONEq(t, `"VISIBLE"`, string(assistant.Content))
 		require.Equal(t, "OLD2", assistant.ReasoningContent)
 	})
+
+	t.Run("unclosed leading thinking drops following text", func(t *testing.T) {
+		input := `[
+			{"role":"user","content":[{"type":"input_text","text":"hi"}]},
+			{"role":"assistant","content":[{"type":"output_text","text":"<thinking>SECRET\nVISIBLE"}]},
+			{"role":"user","content":[{"type":"input_text","text":"next"}]}
+		]`
+		req, err := ResponsesToChatCompletionsRequest(&ResponsesRequest{Model: "deepseek-v4-flash", Input: json.RawMessage(input)})
+		require.NoError(t, err)
+		require.Len(t, req.Messages, 3)
+		assistant := req.Messages[1]
+		require.JSONEq(t, `""`, string(assistant.Content))
+		require.Empty(t, assistant.ReasoningContent)
+
+		serialized, err := json.Marshal(req)
+		require.NoError(t, err)
+		require.NotContains(t, string(serialized), "SECRET")
+		require.NotContains(t, string(serialized), "VISIBLE")
+	})
 }
 
 func TestThinkingStrip_DoesNotTouchNonWrapperText(t *testing.T) {

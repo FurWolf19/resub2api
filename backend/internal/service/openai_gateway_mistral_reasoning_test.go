@@ -39,6 +39,8 @@ func requireAssistantReasoningFieldsAbsent(t *testing.T, body []byte) {
 		assistantCount++
 		require.False(t, msg.Get("reasoning_content").Exists(), "reasoning_content 必须剥离: %s", body)
 		require.False(t, msg.Get("reasoning").Exists(), "reasoning 必须剥离: %s", body)
+		require.False(t, msg.Get("reasoning_details").Exists(), "reasoning_details 必须剥离: %s", body)
+		require.False(t, msg.Get("thinking").Exists(), "thinking 必须剥离: %s", body)
 	}
 	require.Positive(t, assistantCount, "用例必须包含 assistant 消息")
 }
@@ -46,6 +48,8 @@ func requireAssistantReasoningFieldsAbsent(t *testing.T, body []byte) {
 func TestChatUpstreamRejectsReasoningFields(t *testing.T) {
 	require.True(t, chatUpstreamRejectsReasoningFields("https://api.mistral.ai/v1/chat/completions"))
 	require.True(t, chatUpstreamRejectsReasoningFields("https://API.MISTRAL.AI:443/v1/chat/completions"))
+	require.True(t, chatUpstreamRejectsReasoningFields("https://api.mistral.ai./v1/chat/completions"))
+	require.True(t, chatUpstreamRejectsReasoningFields("https://API.MISTRAL.AI.:443/v1/chat/completions"))
 	require.False(t, chatUpstreamRejectsReasoningFields("https://api.mistral.ai.evil.example/v1/chat/completions"))
 	require.False(t, chatUpstreamRejectsReasoningFields("https://mistral.ai/v1/chat/completions"))
 	require.False(t, chatUpstreamRejectsReasoningFields("https://api.deepseek.com/v1/chat/completions"))
@@ -57,21 +61,24 @@ func TestChatUpstreamRejectsReasoningFields(t *testing.T) {
 func TestStripChatReasoningFields(t *testing.T) {
 	t.Run("removes_assistant_fields_and_keeps_payload", func(t *testing.T) {
 		body := []byte(`{"model":"mistral-large-latest","messages":[` +
-			`{"role":"system","content":"rules"},` +
-			`{"role":"assistant","reasoning_content":"secret","reasoning":"secret alias","content":"answer","tool_calls":[{"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{\"city\":\"SF\"}"}}]},` +
+			`{"role":"system","thinking":"system thinking","reasoning_details":[{"type":"reasoning.text","text":"system details"}],"content":"rules"},` +
+			`{"role":"assistant","reasoning_content":"secret","reasoning":"secret alias","reasoning_details":[{"type":"reasoning.text","text":"secret details"}],"thinking":"secret thinking","content":"answer","tool_calls":[{"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{\"city\":\"SF\"}"}}]},` +
 			`{"role":"user","content":"hi"},` +
-			`{"role":"user","reasoning_content":"keep for non-assistant"}]}`)
+			`{"role":"user","reasoning_content":"keep for non-assistant","thinking":"keep thinking","reasoning_details":[{"type":"reasoning.text","text":"keep details"}]}]}`)
 
 		got, err := stripChatReasoningFields(body)
 		require.NoError(t, err)
-		require.False(t, gjson.GetBytes(got, "messages.1.reasoning_content").Exists())
-		require.False(t, gjson.GetBytes(got, "messages.1.reasoning").Exists())
+		requireAssistantReasoningFieldsAbsent(t, got)
 		require.Equal(t, "answer", gjson.GetBytes(got, "messages.1.content").String())
 		require.Equal(t, "call_1", gjson.GetBytes(got, "messages.1.tool_calls.0.id").String())
 		require.Equal(t, `{"city":"SF"}`, gjson.GetBytes(got, "messages.1.tool_calls.0.function.arguments").String())
 		require.Equal(t, "rules", gjson.GetBytes(got, "messages.0.content").String())
+		require.Equal(t, "system thinking", gjson.GetBytes(got, "messages.0.thinking").String())
+		require.Equal(t, "system details", gjson.GetBytes(got, "messages.0.reasoning_details.0.text").String())
 		require.Equal(t, "mistral-large-latest", gjson.GetBytes(got, "model").String())
 		require.Equal(t, "keep for non-assistant", gjson.GetBytes(got, "messages.3.reasoning_content").String())
+		require.Equal(t, "keep thinking", gjson.GetBytes(got, "messages.3.thinking").String())
+		require.Equal(t, "keep details", gjson.GetBytes(got, "messages.3.reasoning_details.0.text").String())
 	})
 
 	unchanged := map[string]string{
@@ -90,6 +97,29 @@ func TestStripChatReasoningFields(t *testing.T) {
 			require.Equal(t, body, string(got))
 		})
 	}
+}
+
+func TestForwardAsRawChatCompletions_NonMistralKeepsReasoningFields(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	body := []byte(`{"model":"deepseek-v4-flash","messages":[` +
+		`{"role":"assistant","reasoning_content":"a","reasoning":"b","reasoning_details":[{"type":"reasoning.text","text":"c"}],"thinking":"d","content":"answer"}],` +
+		`"stream":false}`)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	upstreamJSON := `{"id":"chatcmpl_non_mistral_reasoning","object":"chat.completion","model":"deepseek-v4-flash","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`
+	upstream := &httpUpstreamRecorder{resp: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}, "x-request-id": []string{"rid_non_mistral_reasoning"}},
+		Body:       io.NopCloser(strings.NewReader(upstreamJSON)),
+	}}
+	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream}
+
+	_, err := svc.forwardAsRawChatCompletions(context.Background(), c, rawChatCompletionsTestAccount(), body, "")
+	require.NoError(t, err)
+	require.Equal(t, string(body), string(upstream.lastBody), "非 Mistral 上游必须原样保留 reasoning 回放字段")
 }
 
 func TestForwardResponses_MistralChatFallbackStripsReasoningFields(t *testing.T) {
