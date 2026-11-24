@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/openai_compat"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -42,6 +43,20 @@ func compatStreamSideEffectsAccount() Account {
 		Schedulable: true,
 		Concurrency: 1,
 		Credentials: map[string]any{"api_key": "sk-test"},
+		// 这些用例针对 CC→Responses 转换链的错误副作用。auto APIKey 现在跟随
+		// 入站协议，不写能力会走 raw CC 直转，因此固定为“上游只支持 Responses”。
+		Extra: map[string]any{
+			openai_compat.ExtraKeyProtocolCapabilities: map[string]any{
+				openai_compat.ProtocolResponses: map[string]any{
+					"supported": true,
+					"probed_at": time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC).Format(time.RFC3339),
+				},
+				openai_compat.ProtocolChatCompletions: map[string]any{
+					"supported": false,
+					"probed_at": time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC).Format(time.RFC3339),
+				},
+			},
+		},
 	}
 }
 
