@@ -480,6 +480,113 @@ func TestChatToResponses_StripsLegacyThinkingPrefix(t *testing.T) {
 	})
 }
 
+func TestChatToResponses_StripsHardenedLegacyThinkingVariants(t *testing.T) {
+	tests := []struct {
+		name        string
+		content     string
+		wantVisible string
+	}{
+		{
+			name:        "trailing whitespace after block",
+			content:     "<thinking>SECRET</thinking>  ",
+			wantVisible: "",
+		},
+		{
+			name:        "BOM prefix",
+			content:     "\ufeff<thinking>SECRET</thinking>VISIBLE",
+			wantVisible: "VISIBLE",
+		},
+		{
+			name:        "zero width prefix",
+			content:     "\u200b\u200c\u200d\u2060<thinking>SECRET</thinking>VISIBLE",
+			wantVisible: "VISIBLE",
+		},
+		{
+			name:        "uppercase tags",
+			content:     "<THINKING>SECRET</THINKING>VISIBLE",
+			wantVisible: "VISIBLE",
+		},
+		{
+			name:        "mixed case tags with space before closing bracket",
+			content:     "<ThInKiNg >SECRET</tHiNkInG >VISIBLE",
+			wantVisible: "VISIBLE",
+		},
+		{
+			name:        "multiple blocks with whitespace",
+			content:     "<thinking>OLD</thinking>  \n<thinking>SECRET</thinking> \t\nVISIBLE",
+			wantVisible: "VISIBLE",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := &ChatCompletionsRequest{
+				Model: "gpt-4o",
+				Messages: []ChatMessage{
+					{Role: "user", Content: json.RawMessage(`"Hi"`)},
+					{Role: "assistant", Content: json.RawMessage(strconvQuote(tt.content))},
+				},
+			}
+
+			items, raw := convertChatRequestForReasoningTest(t, req, ChatCompletionsReasoningReplayDrop)
+
+			assert.NotContains(t, strings.ToLower(raw), "<thinking")
+			assert.NotContains(t, raw, "SECRET")
+			assert.NotContains(t, raw, "OLD")
+			if tt.wantVisible == "" {
+				require.Len(t, items, 1)
+				return
+			}
+			require.Len(t, items, 2)
+			assert.Equal(t, tt.wantVisible, messagePartText(t, items[1]))
+		})
+	}
+}
+
+func TestChatToResponses_KeepsHardenedLegacyReasoningInTextMode(t *testing.T) {
+	req := &ChatCompletionsRequest{
+		Model: "deepseek-v4-flash",
+		Messages: []ChatMessage{
+			{Role: "user", Content: json.RawMessage(`"Hi"`)},
+			{Role: "assistant", Content: json.RawMessage(strconvQuote("\ufeff<THINKING >SECRET</THINKING >\nVISIBLE"))},
+		},
+	}
+
+	items, raw := convertChatRequestForReasoningTest(t, req, ChatCompletionsReasoningReplayText)
+
+	require.Len(t, items, 3)
+	assert.Equal(t, "SECRET", reasoningItemText(t, items[1]))
+	assert.Equal(t, "VISIBLE", messagePartText(t, items[2]))
+	messageJSON, err := json.Marshal(items[2])
+	require.NoError(t, err)
+	assert.NotContains(t, string(messageJSON), "SECRET")
+	assert.NotContains(t, strings.ToLower(raw), "<thinking")
+}
+
+func TestChatToResponses_HardenedThinkingVariantsDoNotTouchNonAssistantRoles(t *testing.T) {
+	contents := []string{
+		"\ufeff<THINKING>KEEP</THINKING>VISIBLE",
+		"\u200b<thinking>KEEP</thinking>visible",
+		"prefix <thinking>KEEP</thinking>\nVISIBLE",
+		"</thinking>VISIBLE",
+	}
+
+	for _, content := range contents {
+		req := &ChatCompletionsRequest{
+			Model: "gpt-4o",
+			Messages: []ChatMessage{
+				{Role: "system", Content: json.RawMessage(strconvQuote(content))},
+				{Role: "user", Content: json.RawMessage(strconvQuote(content))},
+			},
+		}
+
+		items, _ := convertChatRequestForReasoningTest(t, req, ChatCompletionsReasoningReplayDrop)
+		require.Len(t, items, 2, "content %q", content)
+		assert.JSONEq(t, strconvQuote(content), string(items[0].Content), "system content %q", content)
+		assert.JSONEq(t, strconvQuote(content), string(items[1].Content), "user content %q", content)
+	}
+}
+
 func TestResponsesToChat_StripsLegacyThinkingPrefix(t *testing.T) {
 	t.Run("backfills reasoning content", func(t *testing.T) {
 		input := `[
@@ -511,6 +618,35 @@ func TestResponsesToChat_StripsLegacyThinkingPrefix(t *testing.T) {
 		require.Equal(t, "OLD2", assistant.ReasoningContent)
 	})
 
+	t.Run("hardened wrapper variants", func(t *testing.T) {
+		input := `[
+			{"role":"user","content":[{"type":"input_text","text":"hi"}]},
+			{"role":"assistant","content":[{"type":"output_text","text":"\ufeff<THINKING >OLD</THINKING >  \nVISIBLE"}]},
+			{"role":"user","content":[{"type":"input_text","text":"next"}]}
+		]`
+		req, err := ResponsesToChatCompletionsRequest(&ResponsesRequest{Model: "deepseek-v4-flash", Input: json.RawMessage(input)})
+		require.NoError(t, err)
+		require.Len(t, req.Messages, 3)
+		assistant := req.Messages[1]
+		require.JSONEq(t, `"VISIBLE"`, string(assistant.Content))
+		require.Equal(t, "OLD", assistant.ReasoningContent)
+	})
+
+	t.Run("trailing whitespace only block does not leak", func(t *testing.T) {
+		input := `[
+			{"role":"user","content":[{"type":"input_text","text":"hi"}]},
+			{"role":"assistant","content":[{"type":"output_text","text":"<thinking>SECRET</thinking>  "}]}
+		]`
+		req, err := ResponsesToChatCompletionsRequest(&ResponsesRequest{Model: "deepseek-v4-flash", Input: json.RawMessage(input)})
+		require.NoError(t, err)
+		require.Len(t, req.Messages, 2)
+		assistant := req.Messages[1]
+		require.JSONEq(t, `""`, string(assistant.Content))
+		require.Equal(t, "SECRET", assistant.ReasoningContent)
+		require.NotContains(t, string(assistant.Content), "SECRET")
+		require.NotContains(t, strings.ToLower(string(assistant.Content)), "<thinking")
+	})
+
 	t.Run("unclosed leading thinking drops following text", func(t *testing.T) {
 		input := `[
 			{"role":"user","content":[{"type":"input_text","text":"hi"}]},
@@ -535,7 +671,9 @@ func TestThinkingStrip_DoesNotTouchNonWrapperText(t *testing.T) {
 	assistantTexts := []string{
 		"prefix <thinking>KEEP</thinking>\nVISIBLE",
 		"<thinking>x</thinking> is a tag",
-		"<Thinking>x</Thinking>\nVISIBLE",
+		"<Thinking>x</Thinking> is a tag",
+		"</thinking>VISIBLE",
+		"\ufeffplain visible",
 	}
 
 	for _, text := range assistantTexts {
