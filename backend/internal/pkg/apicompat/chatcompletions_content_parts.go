@@ -3,6 +3,7 @@ package apicompat
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"strings"
 )
 
@@ -40,6 +41,40 @@ func normalizeChatResponseMessageContent(m *ChatMessage) {
 	}
 	m.Content = marshalChatContentString(visible)
 	m.ReasoningContent = joinChatReasoningText(m.reasoningText(), reasoning)
+}
+
+// NormalizeChatContentParts splits a Chat Completions response content value
+// into visible text and reasoning text. Strings pass through unchanged. Arrays
+// follow the same part rules as ChatChoice.UnmarshalJSON: thinking/reasoning
+// parts become reasoning, text/output_text/input_text parts become visible
+// content, and unknown parts are dropped. isArray reports whether raw was an
+// array so callers can tell whether the value needs rewriting at all.
+//
+// This is for wire-level passthrough paths that cannot decode into ChatMessage;
+// protocol conversion keeps using the decoders above.
+func NormalizeChatContentParts(raw json.RawMessage) (content, reasoning string, isArray bool, err error) {
+	return normalizeChatContentParts(raw, "\n\n")
+}
+
+// NormalizeChatContentPartsDelta is the streaming variant: visible parts are
+// concatenated without a separator because they belong to one delta increment.
+func NormalizeChatContentPartsDelta(raw json.RawMessage) (content, reasoning string, isArray bool, err error) {
+	return normalizeChatContentParts(raw, "")
+}
+
+func normalizeChatContentParts(raw json.RawMessage, textSeparator string) (content, reasoning string, isArray bool, err error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		return "", "", false, nil
+	}
+	if trimmed[0] == '[' {
+		content, reasoning, _, _ = chatContentArrayPartsDetailed(trimmed, textSeparator)
+		return content, reasoning, true, nil
+	}
+	if err := json.Unmarshal(trimmed, &content); err != nil {
+		return "", "", false, fmt.Errorf("normalize chat content parts: %w", err)
+	}
+	return content, "", false, nil
 }
 
 // UnmarshalJSON accepts delta.content as a string or an array of typed parts.

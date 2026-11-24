@@ -208,6 +208,7 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletionsWithStartTime(
 		return nil, err
 	}
 	SetActualOpenAIUpstreamEndpoint(c, grokChatRawEndpoint)
+	normalizeMistral := isMistralChatUpstream(targetURL)
 	customUA := account.GetOpenAIUserAgent()
 	if customUA == "" && account.IsGrokOAuth() {
 		customUA = defaultGrokUpstreamUserAgent()
@@ -275,9 +276,9 @@ func (s *OpenAIGatewayService) forwardAsRawChatCompletionsWithStartTime(
 	var result *OpenAIForwardResult
 	var forwardErr error
 	if clientStream {
-		result, forwardErr = s.streamRawChatCompletions(c, resp, account, originalModel, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime, len(body))
+		result, forwardErr = s.streamRawChatCompletions(c, resp, account, originalModel, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime, len(body), normalizeMistral)
 	} else {
-		result, forwardErr = s.bufferRawChatCompletions(c, resp, account, originalModel, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime)
+		result, forwardErr = s.bufferRawChatCompletions(c, resp, account, originalModel, billingModel, upstreamModel, reasoningEffort, serviceTier, startTime, normalizeMistral)
 	}
 	if result != nil {
 		addOpenAIUsage(&result.Usage, bridgeUsage)
@@ -315,6 +316,7 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 	serviceTier *string,
 	startTime time.Time,
 	requestBodyLen int,
+	normalizeMistral bool,
 ) (*OpenAIForwardResult, error) {
 	observer := upstreamResponseModelObserverFromContext(c)
 	if observer == nil {
@@ -391,6 +393,9 @@ func (s *OpenAIGatewayService) streamRawChatCompletions(
 		}
 		line = applyOllamaCloudRawChatCompletionsSSELine(account, line)
 		line = stripEmptyChatToolCallIdentityFromSSELine(line)
+		if normalizeMistral {
+			line = string(applyMistralRawChatCompletionsSSELine([]byte(line)))
+		}
 
 		line = s.replaceModelInSSELine(line, upstreamModel, originalModel)
 		writeLine(line)
@@ -531,6 +536,7 @@ func (s *OpenAIGatewayService) bufferRawChatCompletions(
 	reasoningEffort *string,
 	serviceTier *string,
 	startTime time.Time,
+	normalizeMistral bool,
 ) (*OpenAIForwardResult, error) {
 	requestID := resp.Header.Get("x-request-id")
 
@@ -557,6 +563,9 @@ func (s *OpenAIGatewayService) bufferRawChatCompletions(
 		return nil, newGrokMissingUsageFailoverError(c, account, upstreamRequestID)
 	}
 	respBody = applyOllamaCloudRawChatCompletionsResponse(account, respBody)
+	if normalizeMistral {
+		respBody = applyMistralRawChatCompletionsResponse(respBody)
+	}
 	respBody = s.replaceModelInResponseBody(respBody, upstreamModel, originalModel)
 
 	if s.responseHeaderFilter != nil {

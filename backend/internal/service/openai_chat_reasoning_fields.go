@@ -17,6 +17,12 @@ const mistralChatRejectsReasoningFieldsHost = "api.mistral.ai"
 // assistant 消息里的 reasoning 回放字段（Mistral 返回 422 extra_forbidden）。
 // URL 解析失败时返回 false，保持原请求不变。
 func chatUpstreamRejectsReasoningFields(targetURL string) bool {
+	return isMistralChatUpstream(targetURL)
+}
+
+// isMistralChatUpstream 按 host 精确判定目标是否为 Mistral Chat Completions。
+// 请求侧剥离 reasoning 字段与响应侧归一化 content 数组共用同一判定。
+func isMistralChatUpstream(targetURL string) bool {
 	u, err := url.Parse(strings.TrimSpace(targetURL))
 	if err != nil {
 		return false
