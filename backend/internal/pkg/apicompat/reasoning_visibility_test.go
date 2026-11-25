@@ -507,8 +507,43 @@ func TestChatToResponses_StripsHardenedLegacyThinkingVariants(t *testing.T) {
 			wantVisible: "VISIBLE",
 		},
 		{
-			name:        "mixed case tags with space before closing bracket",
+			name:        "mixed case tags with space before closing bracket and trailing text are dropped",
 			content:     "<ThInKiNg >SECRET</tHiNkInG >VISIBLE",
+			wantVisible: "",
+		},
+		{
+			name:        "single forged flexible close with trailing text is dropped",
+			content:     "<thinking>Use </THINKING >\nSECRET\nvisible",
+			wantVisible: "",
+		},
+		{
+			name:        "same line prose after block",
+			content:     "<thinking>SECRET</thinking> visible",
+			wantVisible: "visible",
+		},
+		{
+			name:        "forged uppercase spaced close does not truncate the last close",
+			content:     "<thinking>Use </THINKING >\nSECRET\n</thinking>\nVISIBLE",
+			wantVisible: "VISIBLE",
+		},
+		{
+			name:        "forged same form close does not truncate the last close",
+			content:     "<thinking>Use </thinking>\nSECRET\n</thinking>\nVISIBLE",
+			wantVisible: "VISIBLE",
+		},
+		{
+			name:        "forged lowercase close inside uppercase wrapper",
+			content:     "<THINKING>Use </thinking>\nSECRET\n</THINKING>\nVISIBLE",
+			wantVisible: "VISIBLE",
+		},
+		{
+			name:        "indentation after newline is preserved",
+			content:     "<thinking>plan</thinking>\n    code",
+			wantVisible: "    code",
+		},
+		{
+			name:        "spaces and zero width after block",
+			content:     "<thinking>SECRET</thinking> \u200bVISIBLE",
 			wantVisible: "VISIBLE",
 		},
 		{
@@ -541,6 +576,84 @@ func TestChatToResponses_StripsHardenedLegacyThinkingVariants(t *testing.T) {
 			assert.Equal(t, tt.wantVisible, messagePartText(t, items[1]))
 		})
 	}
+}
+
+func TestChatToResponses_ForgedCloseVariantsKeepReasoningOutOfVisibleText(t *testing.T) {
+	tests := []struct {
+		name              string
+		content           string
+		wantReasoningPart string
+	}{
+		{
+			name:              "lowercase wrapper with uppercase spaced close",
+			content:           "<thinking>Use </THINKING >\nSECRET\n</thinking>\nVISIBLE",
+			wantReasoningPart: "</THINKING >",
+		},
+		{
+			name:              "lowercase wrapper with same form close quote",
+			content:           "<thinking>Use </thinking>\nSECRET\n</thinking>\nVISIBLE",
+			wantReasoningPart: "Use </thinking>\nSECRET",
+		},
+		{
+			name:              "uppercase wrapper with lowercase close",
+			content:           "<THINKING>Use </thinking>\nSECRET\n</THINKING>\nVISIBLE",
+			wantReasoningPart: "</thinking>",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := &ChatCompletionsRequest{
+				Model: "deepseek-v4-flash",
+				Messages: []ChatMessage{
+					{Role: "user", Content: json.RawMessage(`"Hi"`)},
+					{Role: "assistant", Content: json.RawMessage(strconvQuote(tt.content))},
+				},
+			}
+
+			items, raw := convertChatRequestForReasoningTest(t, req, ChatCompletionsReasoningReplayText)
+
+			require.Len(t, items, 3)
+			reasoning := reasoningItemText(t, items[1])
+			assert.Contains(t, reasoning, "Use")
+			assert.Contains(t, reasoning, "SECRET")
+			assert.Contains(t, reasoning, tt.wantReasoningPart)
+			assert.Equal(t, "VISIBLE", messagePartText(t, items[2]))
+
+			messageJSON, err := json.Marshal(items[2])
+			require.NoError(t, err)
+			assert.NotContains(t, string(messageJSON), "SECRET")
+			assert.NotContains(t, strings.ToLower(string(messageJSON)), "<thinking")
+			assert.NotContains(t, strings.ToLower(raw), "<thinking>")
+		})
+	}
+}
+
+func TestChatToResponses_B1LastCloseWinsWithToolCall(t *testing.T) {
+	req := &ChatCompletionsRequest{
+		Model: "deepseek-v4-flash",
+		Messages: []ChatMessage{
+			{Role: "user", Content: json.RawMessage(`"Hi"`)},
+			{
+				Role:    "assistant",
+				Content: json.RawMessage(strconvQuote("<thinking>Use </thinking>\nSECRET\n</THINKING >")),
+				ToolCalls: []ChatToolCall{{
+					ID: "call_1", Type: "function",
+					Function: ChatFunctionCall{Name: "lookup", Arguments: `{}`},
+				}},
+			},
+		},
+	}
+
+	items, raw := convertChatRequestForReasoningTest(t, req, ChatCompletionsReasoningReplayText)
+
+	require.Len(t, items, 3)
+	reasoning := reasoningItemText(t, items[1])
+	assert.Contains(t, reasoning, "Use")
+	assert.Contains(t, reasoning, "SECRET")
+	assert.Contains(t, reasoning, "</thinking>")
+	assert.Equal(t, "function_call", items[2].Type)
+	assert.NotContains(t, strings.ToLower(raw), "<thinking>")
 }
 
 func TestChatToResponses_KeepsHardenedLegacyReasoningInTextMode(t *testing.T) {
@@ -670,8 +783,6 @@ func TestResponsesToChat_StripsLegacyThinkingPrefix(t *testing.T) {
 func TestThinkingStrip_DoesNotTouchNonWrapperText(t *testing.T) {
 	assistantTexts := []string{
 		"prefix <thinking>KEEP</thinking>\nVISIBLE",
-		"<thinking>x</thinking> is a tag",
-		"<Thinking>x</Thinking> is a tag",
 		"</thinking>VISIBLE",
 		"\ufeffplain visible",
 	}

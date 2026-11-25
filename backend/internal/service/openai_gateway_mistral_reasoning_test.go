@@ -99,6 +99,111 @@ func TestStripChatReasoningFields(t *testing.T) {
 	}
 }
 
+func TestStripChatReasoningFields_DropsEmptyAssistantAfterStrip(t *testing.T) {
+	body := []byte(`{"model":"mistral-large-latest","messages":[` +
+		`{"role":"system","content":"rules"},` +
+		`{"role":"assistant","reasoning_content":"secret"},` +
+		`{"role":"user","content":"hi"},` +
+		`{"role":"assistant","reasoning_content":"secret","content":""},` +
+		`{"role":"assistant","reasoning_content":"secret","content":[]},` +
+		`{"role":"assistant","reasoning_content":"secret","tool_calls":[]},` +
+		`{"role":"assistant","reasoning_content":"secret","content":"answer"},` +
+		`{"role":"assistant","reasoning_content":"secret","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]}` +
+		`]}`)
+
+	got, err := stripChatReasoningFields(body)
+	require.NoError(t, err)
+
+	messages := gjson.GetBytes(got, "messages").Array()
+	require.Len(t, messages, 4, "empty assistant turns must be removed: %s", got)
+	require.Equal(t, "system", messages[0].Get("role").String())
+	require.Equal(t, "user", messages[1].Get("role").String())
+	require.Equal(t, "answer", messages[2].Get("content").String())
+	require.Equal(t, "call_1", messages[3].Get("tool_calls.0.id").String())
+	requireAssistantReasoningFieldsAbsent(t, got)
+	require.NotContains(t, string(got), "secret")
+}
+
+func TestStripChatReasoningFields_EmptyContentShapes(t *testing.T) {
+	tests := []struct {
+		name            string
+		fields          string
+		keep            bool
+		wantRefusal     string
+		wantContentType string
+		wantContentText string
+	}{
+		{name: "missing content", fields: "", keep: false},
+		{name: "empty string", fields: `,"content":""`, keep: false},
+		{name: "whitespace string", fields: `,"content":"   "`, keep: false},
+		{name: "null content", fields: `,"content":null`, keep: false},
+		{name: "empty array", fields: `,"content":[]`, keep: false},
+		{name: "whitespace text part", fields: `,"content":[{"type":"text","text":" "}]`, keep: false},
+		{name: "non-empty text part", fields: `,"content":[{"type":"text","text":"answer"}]`, keep: true, wantContentType: "text", wantContentText: "answer"},
+		{name: "image part", fields: `,"content":[{"type":"image_url","image_url":{"url":"https://example.test/a.png"}}]`, keep: true, wantContentType: "image_url"},
+		{name: "refusal only", fields: `,"refusal":"blocked"`, keep: true, wantRefusal: "blocked"},
+		{name: "tool calls", fields: `,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]`, keep: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := []byte(`{"model":"mistral-large-latest","messages":[` +
+				`{"role":"user","content":"hi"},` +
+				`{"role":"assistant","reasoning_content":"secret"` + tt.fields + `}]}`)
+
+			got, err := stripChatReasoningFields(body)
+			require.NoError(t, err)
+
+			messages := gjson.GetBytes(got, "messages").Array()
+			if !tt.keep {
+				require.Len(t, messages, 1, "empty assistant must be removed: %s", got)
+				require.Equal(t, "user", messages[0].Get("role").String())
+				require.NotContains(t, string(got), "secret")
+				return
+			}
+
+			require.Len(t, messages, 2, "assistant with usable content must be kept: %s", got)
+			require.Equal(t, "assistant", messages[1].Get("role").String())
+			requireAssistantReasoningFieldsAbsent(t, got)
+			if tt.wantRefusal != "" {
+				require.Equal(t, tt.wantRefusal, messages[1].Get("refusal").String())
+			}
+			if tt.wantContentType != "" {
+				require.Equal(t, tt.wantContentType, messages[1].Get("content.0.type").String())
+			}
+			if tt.wantContentText != "" {
+				require.Equal(t, tt.wantContentText, messages[1].Get("content.0.text").String())
+			}
+		})
+	}
+}
+
+func TestForwardResponses_MistralChatFallbackDropsReasoningOnlyAssistant(t *testing.T) {
+	body := []byte(`{
+		"model":"mistral-large-latest",
+		"stream":false,
+		"input":[
+			{"type":"reasoning","id":"item_plain","summary":[{"type":"summary_text","text":"plain thinking"}]},
+			{"type":"message","role":"assistant","content":[]},
+			{"type":"message","role":"user","content":[{"type":"input_text","text":"go on"}]}
+		]
+	}`)
+	c := newDeepSeekChatFallbackContext(t, body)
+	upstream := newOKChatCompletionsUpstream("rid_mistral_empty_assistant", deepSeekChatFallbackOKBody)
+	svc := &OpenAIGatewayService{cfg: rawChatCompletionsTestConfig(), httpUpstream: upstream}
+
+	result, err := svc.Forward(context.Background(), c, mistralChatReasoningAccount("https://api.mistral.ai"), body)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	messages := gjson.GetBytes(upstream.lastBody, "messages").Array()
+	require.Len(t, messages, 1, "reasoning-only assistant turn must not reach Mistral: %s", upstream.lastBody)
+	require.Equal(t, "user", messages[0].Get("role").String())
+	require.Equal(t, "go on", messages[0].Get("content").String())
+	require.NotContains(t, string(upstream.lastBody), "plain thinking")
+	require.NotContains(t, string(upstream.lastBody), `"role":"assistant"`)
+}
+
 func TestForwardAsRawChatCompletions_NonMistralKeepsReasoningFields(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	body := []byte(`{"model":"deepseek-v4-flash","messages":[` +
