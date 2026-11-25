@@ -163,17 +163,17 @@ func chatContentArrayPartsDetailed(raw json.RawMessage, textSeparator string) (v
 				continue
 			}
 			hasReasoning = true
-			reasoningBuilder.WriteString(text)
+			_, _ = reasoningBuilder.WriteString(text)
 		case "text", "output_text", "input_text", "":
 			text := rawString(part["text"])
 			if text == "" {
 				continue
 			}
 			if hasVisible {
-				visibleBuilder.WriteString(textSeparator)
+				_, _ = visibleBuilder.WriteString(textSeparator)
 			}
 			hasVisible = true
-			visibleBuilder.WriteString(text)
+			_, _ = visibleBuilder.WriteString(text)
 		default:
 			// Unknown typed parts keep a string text payload as visible content;
 			// parts without text stay dropped and never become reasoning.
@@ -182,10 +182,10 @@ func chatContentArrayPartsDetailed(raw json.RawMessage, textSeparator string) (v
 				continue
 			}
 			if hasVisible {
-				visibleBuilder.WriteString(textSeparator)
+				_, _ = visibleBuilder.WriteString(textSeparator)
 			}
 			hasVisible = true
-			visibleBuilder.WriteString(text)
+			_, _ = visibleBuilder.WriteString(text)
 		}
 	}
 	return visibleBuilder.String(), reasoningBuilder.String(), hasVisible, hasReasoning
@@ -224,7 +224,7 @@ func chatNestedText(raw json.RawMessage) string {
 		if err := json.Unmarshal(partRaw, &part); err != nil {
 			continue
 		}
-		b.WriteString(rawString(part["text"]))
+		_, _ = b.WriteString(rawString(part["text"]))
 	}
 	return b.String()
 }
